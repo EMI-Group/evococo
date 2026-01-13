@@ -3,5 +3,6 @@ uvicorn[standard]
 python-dotenv
 google-generativeai
 websockets
+watchfiles
 torch
 evox
