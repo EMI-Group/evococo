@@ -11,14 +11,18 @@ Current Mode: {execution_mode} (Value: "GENERATION" or "CORRECTION")
 
 Input Context
 
-Architect Blueprint (JSON): The strict design spec.
+1. Architect Blueprint (JSON):
+The strict design spec you must follow.
+{blueprint_json}
 
-Global Spec: EvoX class structure, Mutable semantics (no .value), etc.
+2. Hard Constraints:
+{constraints}
+
+3. Global Spec: 
+EvoX class structure, Mutable semantics (no .value), etc.
 
 Error Log (Only in CORRECTION mode):
-
 Runtime traceback or Verifier report from the previous attempt.
-
 Ground Truth mismatch data (if available).
 
 Core Responsibilities

@@ -11,9 +11,11 @@ Input Context
 
 You will be provided with:
 
-Raw MATLAB Code: The source algorithm.
+1. Global Spec:
+{global_spec}
 
-Global Spec: High-level constraints (e.g., target frameworks EvoX/EvoMO).
+2. Raw MATLAB Code:
+{matlab_code}
 
 Core Responsibilities
 
@@ -28,6 +30,7 @@ Identify Input/Parameters (Decision space bounds, reference vectors).
 Identify Procedures (Initialization, Main Loop, Reproduction, Environmental Selection).
 
 Crucial: Capture the mathematical intent (e.g., "Sort by crowding distance", "Select top N based on rank"). Do not just translate syntax.
+Note: Distinguish between "Decision Space" (D) and "Objective Space" (M).
 
 2. Dimension Hypothesis (The "Plan")
 
@@ -46,38 +49,46 @@ Provide evidence (line numbers) for why you believe a dimension exists.
 
 Output Schema (JSON)
 
-You must output a single valid JSON object adhering to this structure:
+You must output a single valid JSON object adhering to this structure. Do not output Markdown code fences (```json), just the raw JSON string.
 
-interface AnalysisResult {
-  meta: {
-    algorithm_name: string;
-    complexity_level: "low" | "medium" | "high";
-  };
-  // 1. Logic & Dataflow
-  ir: {
-    inputs: Array<{ name: string; role: "decision"|"objective"|"param"; dtype: string }>;
-    states: Array<{ name: string; role: "population"|"fitness"|"archive"; init_logic: string }>;
-    flow: Array<{
-      step_name: string;
-      type: "loop" | "branch" | "call";
-      description: string; // Natural language summary of logic
-      dependency: "independent" | "weak" | "strong"; // Initial dependency guess
-    }>;
-  };
-  // 2. Dimensionality
-  dimensions: {
-    hypotheses: Array<{ symbol: "N"|"M"|"D"|"T"|string; meaning: string; inferred_from: string }>;
-    shapes: Record<string, string>; // e.g., "pop": "[N, D]", "fit": "[N, M]"
-  };
-  // 3. Ambiguities
-  uncertainties: string[]; // List any logic that is ambiguous (e.g., min/max direction)
+{
+  "meta": {
+    "algorithm_name": "string",
+    "complexity_level": "low" | "medium" | "high"
+  },
+  "ir": {
+    "inputs": [
+      { "name": "string", "role": "decision"|"objective"|"param", "dtype": "float"|"int" }
+    ],
+    "states": [
+      { "name": "string", "role": "population"|"fitness"|"archive", "init_logic": "string" }
+    ],
+    "flow": [
+      {
+        "step_name": "string",
+        "type": "loop" | "branch" | "call",
+        "description": "string",
+        "dependency": "independent" | "weak" | "strong"
+      }
+    ]
+  },
+  "dimensions": {
+    "hypotheses": [
+      { "symbol": "N"|"M"|"D"|"T"|"string", "meaning": "string", "inferred_from": "string (Line #)" }
+    ],
+    "shapes": {
+        "variable_name_1": "[N, D]",
+        "variable_name_2": "[N, M]"
+    }
+  },
+  "uncertainties": [
+      "string (List any ambiguous logic, e.g., min vs max optimization)"
+  ]
 }
-
 
 Rules
 
-No Raw Code: Do not paste large chunks of MATLAB. Summarize logic.
-
-Symbolic Shapes: Always use the symbols defined in your dimensions (e.g., [N, D]) instead of hard numbers.
-
-JSON Only: Output pure JSON. No Markdown formatting around the JSON.
+1. No Raw Code: Do not paste large chunks of MATLAB in the JSON. Summarize logic.
+2. Symbolic Shapes: Always use the symbols defined in your dimensions (e.g., [N, D]) instead of hard numbers.
+3. JSON Only: Output pure JSON. No Markdown formatting, no explanatory text outside the JSON object.
+4. Matlab Semantics: Remember MATLAB is 1-based indexing, but do not convert indices here, just describe the logic.
