@@ -1,10 +1,14 @@
 import asyncio
 import json
 import traceback
+import os
+import datetime
 from .generator import generate_llm_response
 from .executor import execute_code
 
-# RAG 数据库
+# --- 配置部分 ---
+
+# RAG 数据库 (模拟)
 RAG_DB = [
     {
         "keywords": ["crowding", "distance", "cd"],
@@ -29,10 +33,63 @@ RAG_DB = [
     {"keywords": ["ceil"], "id": "Bug #2", "rule": "Do not use torch.ceil on scalars."},
 ]
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 将历史记录存到根目录下的 run_history 文件夹（与 backend 平级）
+HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
+
+
+# --- 辅助函数：文件保存 ---
+
+
+def ensure_history_dir():
+    """确保 history 目录存在，并返回当前运行的独立时间戳目录"""
+    if not os.path.exists(HISTORY_DIR):
+        os.makedirs(HISTORY_DIR)
+
+    # 创建带时间戳的运行目录，例如: backend/history/20260113_123045
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = os.path.join(HISTORY_DIR, timestamp)
+    os.makedirs(run_dir)
+    return run_dir
+
+
+def save_artifact(run_dir, filename, content):
+    """保存中间产物到文件 (支持 JSON 自动格式化)"""
+    path = os.path.join(run_dir, filename)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            if isinstance(content, (dict, list)):
+                f.write(json.dumps(content, indent=2, ensure_ascii=False))
+            else:
+                f.write(str(content))
+        print(f">>> [SAVED] {filename}")
+    except Exception as e:
+        print(f">>> [SAVE ERROR] Failed to save {filename}: {e}")
+
+
+# --- 核心 Pipeline ---
+
 
 async def run_pipeline(matlab_code: str, status_callback):
     print(">>> [DEBUG] run_pipeline started!")
-    await status_callback("init", "Pipeline Initialized", "Engine started...")
+
+    # 1. 初始化运行目录
+    try:
+        run_dir = ensure_history_dir()
+        print(f">>> [INFO] Run artifacts will be saved to: {run_dir}")
+    except Exception as e:
+        print(f">>> [ERROR] Failed to create history dir: {e}")
+        run_dir = None
+
+    # 保存原始输入
+    if run_dir:
+        save_artifact(run_dir, "0_input.m", matlab_code)
+
+    await status_callback(
+        "init",
+        "Pipeline Initialized",
+        f"Session: {os.path.basename(run_dir) if run_dir else 'Temp'}",
+    )
 
     try:
         # --- STEP 1: ANALYST ---
@@ -45,8 +102,18 @@ async def run_pipeline(matlab_code: str, status_callback):
             icon="fa-magnifying-glass",
         )
 
-        ir_str = await generate_llm_response("1_analyst.md", matlab_code=matlab_code)
+        # 构造 global_spec
+        global_spec = "Target Framework: EvoX (PyTorch based). Hardware: GPU optimized."
+
+        ir_str = await generate_llm_response(
+            "1_analyst.md", matlab_code=matlab_code, global_spec=global_spec
+        )
         ir_json = extract_json(ir_str)
+
+        # [SAVE]
+        if run_dir:
+            save_artifact(run_dir, "1_analyst_ir.json", ir_json)
+
         print(f">>> [DEBUG] Analyst done. Keys: {ir_json.keys()}")
 
         await status_callback("result_ir", "", json.dumps(ir_json, indent=2))
@@ -66,7 +133,6 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         all_rules = "\n".join([f"[ID: {r['id']}] {r['rule']}" for r in RAG_DB])
 
-        # ！！！关键修复：修正文件名 "2_rag.md" -> "2_rag_selector.md"
         rag_str = await generate_llm_response(
             "2_rag_selector.md", rules_context=all_rules, ir_json=json.dumps(ir_json)
         )
@@ -76,6 +142,10 @@ async def run_pipeline(matlab_code: str, status_callback):
         matched_rules_text = "\n".join(
             [f"[{r['id']}] {r['rule']}" for r in RAG_DB if r["id"] in selected_ids]
         )
+
+        # [SAVE]
+        if run_dir:
+            save_artifact(run_dir, "2_rag_selection.json", rag_json)
 
         await status_callback(
             "step_done",
@@ -99,6 +169,10 @@ async def run_pipeline(matlab_code: str, status_callback):
             "3_architect.md", rag_rules=matched_rules_text, ir_json=json.dumps(ir_json)
         )
         blueprint_json = extract_json(blueprint_str)
+
+        # [SAVE]
+        if run_dir:
+            save_artifact(run_dir, "3_blueprint.json", blueprint_json)
 
         await status_callback(
             "result_blueprint", "", json.dumps(blueprint_json, indent=2)
@@ -139,11 +213,23 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
 
             code = code.replace("```python", "").replace("```", "").strip()
+
+            # [SAVE] 每次生成的代码都存下来，方便对比
+            if run_dir:
+                save_artifact(run_dir, f"4_code_try_{attempt}.py", code)
+
             await status_callback("result_code", "", code)
 
             # 执行
             print(f">>> [DEBUG] Executing code (Length: {len(code)})")
             success, output, error = execute_code(code)
+
+            # [SAVE] 保存执行结果日志
+            if run_dir:
+                log_content = f"STDOUT:\n{output}\n\nSTDERR:\n{error}"
+                save_artifact(
+                    run_dir, f"4_execution_log_try_{attempt}.txt", log_content
+                )
 
             if success:
                 await status_callback(
@@ -170,6 +256,10 @@ async def run_pipeline(matlab_code: str, status_callback):
     except Exception as e:
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
+        # [SAVE] 致命错误也存下来
+        if run_dir:
+            save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
+
         await status_callback("fatal", "System Error", f"{str(e)}")
 
 
