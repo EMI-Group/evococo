@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "Bug #1 (Integer Sentinel)",
+      "description": "Never initialize integer tensors (like Rank, FrontNo) with torch.inf. It causes overflow/conversion errors.",
+      "action": "must_not",
+      "keywords": ["rank", "front", "index", "int", "integer"],
+      "always_apply": true,
+      "instruction": "Use `sentinel = torch.iinfo(torch.int32).max` instead of `torch.inf`."
+    },
+    {
+      "id": "Bug #2 (Ceil Semantics)",
+      "description": "torch.ceil on Python scalars behaves differently than expected in some PyTorch versions.",
+      "action": "must_not",
+      "keywords": ["ceil", "round"],
+      "always_apply": true,
+      "instruction": "Use integer math `(N + 1) // 2` instead of `torch.ceil`."
+    },
+    {
+      "id": "Bug #3 (Unique Stability)",
+      "description": "torch.unique(dim=0) is non-deterministic or unstable for return_inverse in some versions.",
+      "action": "must_not",
+      "keywords": ["unique", "duplicate"],
+      "always_apply": true,
+      "instruction": "Use `evomo.utils.unique_rows_sorted`."
+    },
+    {
+      "id": "Bug #5 (Torch Cond)",
+      "description": "torch.cond is not fully supported in all compilation backends yet.",
+      "action": "must_not",
+      "keywords": ["cond", "switch", "branch"],
+      "always_apply": true,
+      "instruction": "Use standard python `if/else` or `torch.where`."
+    },
+    {
+      "id": "Bug #6 (Crowding Distance)",
+      "description": "Crowding distance requires full population + boolean mask. Slicing population beforehand breaks index alignment.",
+      "action": "must",
+      "keywords": ["crowding", "distance", "cd"],
+      "always_apply": false,
+      "instruction": "Call as `crowding_distance(objs, mask)` where mask is boolean [N]. Do not slice objs."
+    },
+    {
+      "id": "Bug #7 (SDR Dominance Matrix)",
+      "description": "Special Dominance Relationship (SDR) requires strict mutual exclusion logic for unordered pairs.",
+      "action": "must",
+      "keywords": ["dominance", "sdr", "theta", "angle"],
+      "always_apply": false,
+      "instruction": "Implement helper `_calculate_sdr_dominance_matrix(norm_p, theta)` using broadcasting and triu_indices."
+    }
+  ]
+}
