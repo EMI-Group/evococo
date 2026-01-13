@@ -233,6 +233,21 @@ end
                 if (step_id === 'rag' && extra_data && extra_data.length > 0) {
                     addRagChips(step_id, extra_data);
                 }
+
+                // --- 核心更新：检测流程结束 (成功或失败都复位) ---
+
+                // 情况 1: 验证通过 (Success)
+                if (title === 'Verification Passed') {
+                    resetButton();
+                    log("Pipeline Completed Successfully.", "text-green-400 font-bold");
+                }
+
+                // 情况 2: 最终失败 (Try 3 失败，即 step_id 为 coder_3 且 failed)
+                // 这意味着重试次数耗尽，流程也结束了
+                else if (step_id === 'coder_3' && is_success === false) {
+                    resetButton();
+                    log("Pipeline Finished: Max retries reached.", "text-red-400 font-bold");
+                }
             }
 
             // 3. Data Payloads (Update Tabs)
@@ -262,12 +277,6 @@ end
             else if (type === 'fatal') {
                 log(message, "text-red-500 font-bold");
                 resetButton();
-            }
-
-            // Check if pipeline finished (e.g., Code Verification Passed)
-            if (type === 'step_done' && title === 'Verification Passed') {
-                resetButton();
-                log("Pipeline Completed Successfully.", "text-indigo-400");
             }
         }
 
