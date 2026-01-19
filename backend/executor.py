@@ -79,8 +79,6 @@ def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str
             f.write(code)
 
         # 2. 构建 Ruff 命令
-        # --select E,F,I: 启用 Pycodestyle(E), Pyflakes(F), Isort(I)
-        # --ignore ...: 忽略指定的规则
         cmd = [
             "ruff",
             "check",
@@ -90,7 +88,7 @@ def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str
             "--ignore",
             ",".join(IGNORE_RUFF_CODES),
             "--output-format",
-            "text",
+            "full",
             "--no-cache",
         ]
 
@@ -99,22 +97,35 @@ def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str
             cmd,
             capture_output=True,
             text=True,
-            timeout=10,
-            cwd=workspace,  # 在该目录下运行
+            timeout=5,  # 保持 5 秒超时
+            cwd=workspace,
         )
 
         if result.returncode == 0:
             return True, ""
         else:
-            # 数据清洗：将绝对路径替换为通用文件名，避免 LLM 被路径干扰
-            # 同时也去除可能的空行
-            clean_error = result.stdout.replace(file_path, "script.py").strip()
+            # 同时捕获 stdout 和 stderr，防止遗漏报错
+            raw_output = result.stdout + "\n" + result.stderr
+
+            # 数据清洗：将绝对路径替换为通用文件名
+            clean_error = raw_output.replace(file_path, "script.py").strip()
+
+            # 兜底逻辑
+            if not clean_error:
+                clean_error = (
+                    f"Ruff failed (Exit Code: {result.returncode}), but no error message was captured.\n"
+                    "Possible reasons: Ruff crashed, or configuration is invalid.\n"
+                    "Please check if 'ruff' is correctly installed in your environment."
+                )
+
             return False, clean_error
 
+    except subprocess.TimeoutExpired:
+        return False, "System Error: Ruff check timed out (limit: 5s)."
     except FileNotFoundError:
         return (
             False,
-            "System Error: 'ruff' not found. Please install it via `pip install ruff`.",
+            "System Error: 'ruff' command not found. Please install it via `pip install ruff`.",
         )
     except Exception as e:
         return False, f"Static Check Error: {str(e)}"
@@ -128,8 +139,6 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
     """
     在隔离的 Session 目录中执行代码
     """
-    # 如果没提供 session_id，创建一个临时的
-    # 默认不自动清理 exec session，方便调试
     if not session_id:
         session_id = f"exec_{str(uuid.uuid4())[:8]}"
 
@@ -145,14 +154,12 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
 
     # 2. 运行代码
     try:
-        # 使用当前环境的 Python 解释器
-        # cwd=workspace: 确保代码运行时的“当前目录”是该 session 目录
         result = subprocess.run(
             [sys.executable, filename],
             capture_output=True,
             text=True,
-            timeout=30,  # 防止死循环
-            cwd=workspace,  # 【关键】隔离运行环境
+            timeout=30,
+            cwd=workspace,
         )
 
         if result.returncode == 0:

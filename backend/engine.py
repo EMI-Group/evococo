@@ -269,7 +269,22 @@ async def run_pipeline(matlab_code: str, status_callback):
                 )
                 break
 
+            # 如果检测失败 (is_valid == False)，执行以下逻辑
             if i < MAX_STATIC_RETRIES:
+                # --- 【新增 1】保存完整报错到文件 ---
+                if run_dir:
+                    save_artifact(run_dir, f"5_ruff_error_{i + 1}.txt", error_msg)
+
+                # --- 【新增 2】推送到前端小控制台 ---
+                # 截取前 300 字符，防止控制台刷屏，并将换行符替换为空格以便单行显示
+                short_err = (
+                    error_msg[:300].replace("\n", " ") + "..."
+                    if len(error_msg) > 300
+                    else error_msg.replace("\n", " ")
+                )
+                await status_callback("log", "RUFF_ERR", short_err)
+                # --------------------------------
+
                 await status_callback(
                     "step_done",
                     "Static Issues",
@@ -314,14 +329,20 @@ async def run_pipeline(matlab_code: str, status_callback):
                     "step_done", "Fixed", "New Version", step_id=fix_id
                 )
             else:
-                # 即使静态检查失败多次，也尝试进入运行时
+                # 最后一次尝试失败
+                if run_dir:
+                    save_artifact(run_dir, f"5_ruff_error_FINAL.txt", error_msg)
+
+                # 推送最终错误提示
+                short_err = error_msg[:300].replace("\n", " ") + "..."
+                await status_callback("log", "RUFF_FAIL", short_err)
+
                 await status_callback(
                     "log",
                     "WARN",
                     "Static check failed multiple times. Proceeding to Runtime anyway.",
                 )
 
-                # 手动结束上一个 Check Step，防止前端转圈
                 await status_callback(
                     "step_done",
                     "Check Failed",
@@ -338,7 +359,6 @@ async def run_pipeline(matlab_code: str, status_callback):
         # =================================================
         if static_pass:
             print(">>> [DEBUG] Step 6: Runtime Verification")
-            # 【修改点 1/2】改为 3，提供 3 次修复机会 (Fix 1, 2, 3)
             MAX_RUNTIME_RETRIES = 3
 
             for attempt in range(1, MAX_RUNTIME_RETRIES + 2):
@@ -404,15 +424,17 @@ async def run_pipeline(matlab_code: str, status_callback):
                         icon="fa-heart-pulse",
                     )
 
-                    # --- 【修改点 2/2】LLM 运行时修复计时 + 前端推送 ---
+                    # --- [计时开始] LLM Runtime Fix ---
                     t_fix_start = time.time()
-                    # 使用 6_runtime_fixer.md 进行逻辑修复 (增量修复)
+
+                    # 传入 matlab_code 作为参考
                     current_code = await generate_llm_response(
                         "6_runtime_fixer.md",
                         constraints=constraints_str,
                         blueprint_plan=blueprint_md,
                         error_summary=f"Runtime Error:\n{error}",
                         previous_code=current_code,
+                        matlab_code=matlab_code,
                     )
                     t_fix_end = time.time()
 
