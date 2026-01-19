@@ -3,12 +3,12 @@ import json
 import traceback
 import os
 import datetime
+import uuid
+import time  # 用于计时
 from .generator import generate_llm_response
-from .executor import execute_code
+from .executor import execute_code, check_syntax_with_ruff
 
 # --- 配置部分 ---
-
-# RAG 数据库 (保持不变)
 RAG_DB = [
     {
         "keywords": ["crowding", "distance", "cd"],
@@ -65,10 +65,7 @@ def save_artifact(run_dir, filename, content):
 
 
 def extract_json(text):
-    """
-    仅用于 RAG Step，因为我们需要解析出具体的 ID 列表。
-    对于 Analyst 和 Architect 的 Markdown 输出，不再使用此函数。
-    """
+    """仅用于 RAG Step 解析 JSON"""
     try:
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0]
@@ -90,11 +87,13 @@ def extract_json(text):
 async def run_pipeline(matlab_code: str, status_callback):
     print(">>> [DEBUG] run_pipeline started!")
 
-    # 1. 初始化运行目录
+    # 1. 初始化运行目录和 Session
     try:
         run_dir = ensure_history_dir()
     except Exception:
         run_dir = None
+
+    session_id = os.path.basename(run_dir) if run_dir else str(uuid.uuid4())[:8]
 
     if run_dir:
         save_artifact(run_dir, "0_input.m", matlab_code)
@@ -102,57 +101,51 @@ async def run_pipeline(matlab_code: str, status_callback):
     await status_callback(
         "init",
         "Pipeline Initialized",
-        f"Session: {os.path.basename(run_dir) if run_dir else 'Temp'}",
+        f"Session: {session_id}",
     )
 
     try:
-        # --- STEP 1: ANALYST (输出改为 Markdown) ---
-        print(">>> [DEBUG] Step 1: Analyst loading 1_analyst.md")
+        # =================================================
+        # STEP 1: ANALYST
+        # =================================================
+        print(">>> [DEBUG] Step 1: Analyst")
         await status_callback(
             "step_start",
-            "Agent Analyst",
-            "Generating Logic Report (Markdown)...",
+            "Step 1: Analyst",
+            "Analyzing Logic...",
             step_id="analyst",
             icon="fa-magnifying-glass",
         )
 
-        # 生成 Markdown 格式的分析报告
         ir_md = await generate_llm_response("1_analyst.md", matlab_code=matlab_code)
 
-        # [SAVE] 保存为 .md
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
 
-        # 前端展示：直接展示 Markdown 文本
         await status_callback("result_ir", "", ir_md)
         await status_callback(
-            "step_done", "Analyst Finished", "Report Generated", step_id="analyst"
+            "step_done", "Analyst Done", "Report Generated", step_id="analyst"
         )
 
-        # --- STEP 2: RAG (输入改为 Markdown，输出保持 JSON 用于程序逻辑) ---
-        print(">>> [DEBUG] Step 2: RAG loading 2_rag_selector.md")
+        # =================================================
+        # STEP 2: RAG
+        # =================================================
+        print(">>> [DEBUG] Step 2: RAG")
         await status_callback(
             "step_start",
-            "Knowledge Retrieval",
-            "Scanning for Known Issues...",
+            "Step 2: RAG",
+            "Scanning Knowledge...",
             step_id="rag",
             icon="fa-book-open",
         )
 
         all_rules_desc = "\n".join([f"[ID: {r['id']}] {r['rule']}" for r in RAG_DB])
-
-        # 将 Analyst 的 Markdown 报告传给 RAG
         rag_str = await generate_llm_response(
-            "2_rag_selector.md",
-            rules_context=all_rules_desc,
-            analyst_report=ir_md,  # <--- 关键修改：传入 MD 文本
+            "2_rag_selector.md", rules_context=all_rules_desc, analyst_report=ir_md
         )
 
-        # RAG 的输出仍然需要是结构化的 (List of IDs)，以便 Engine 过滤 RAG_DB
         rag_json = extract_json(rag_str)
         selected_ids = rag_json.get("selected_rule_ids", [])
-
-        # 提取匹配的具体规则文本
         matched_rules_text = "\n".join(
             [f"[{r['id']}] {r['rule']}" for r in RAG_DB if r["id"] in selected_ids]
         )
@@ -162,110 +155,297 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         await status_callback(
             "step_done",
-            "RAG Finished",
+            "RAG Done",
             f"Found {len(selected_ids)} Rules",
             step_id="rag",
             extra_data=selected_ids,
         )
 
-        # --- STEP 3: ARCHITECT (输出改为 Markdown) ---
-        print(">>> [DEBUG] Step 3: Architect loading 3_architect.md")
+        # =================================================
+        # STEP 3: ARCHITECT
+        # =================================================
+        print(">>> [DEBUG] Step 3: Architect")
         await status_callback(
             "step_start",
-            "Agent Architect",
-            "Designing Tensor Blueprint...",
+            "Step 3: Architect",
+            "Designing Blueprint...",
             step_id="architect",
             icon="fa-compass-drafting",
         )
 
-        # 传入 Analyst 报告(MD) 和 RAG 规则(Text)
         blueprint_md = await generate_llm_response(
-            "3_architect.md",
-            rag_rules=matched_rules_text,
-            analyst_report=ir_md,  # <--- 关键修改：传入 MD 文本
+            "3_architect.md", rag_rules=matched_rules_text, analyst_report=ir_md
         )
 
-        # [SAVE] 保存为 .md
         if run_dir:
             save_artifact(run_dir, "3_blueprint.md", blueprint_md)
 
         await status_callback("result_blueprint", "", blueprint_md)
         await status_callback(
-            "step_done", "Architect Finished", "Blueprint Designed", step_id="architect"
+            "step_done", "Architect Done", "Blueprint Ready", step_id="architect"
         )
 
-        # --- STEP 4: CODER ---
-        print(">>> [DEBUG] Step 4: Coder loading 4_coder.md")
+        # =================================================
+        # STEP 4: CODER (Initial Generation)
+        # =================================================
+        print(">>> [DEBUG] Step 4: Coder (Draft)")
+        await status_callback(
+            "step_start",
+            "Step 4: Coder",
+            "Drafting Initial Code...",
+            step_id="coder_draft",
+            icon="fa-pen-nib",
+        )
 
-        # 构造约束条件：这里直接使用 Step 2 检索到的规则作为硬性约束
-        # 因为 Blueprint 现在是 MD，不容易程序化提取 constraints，我们信任 RAG 的结果
         constraints_str = matched_rules_text if matched_rules_text else "None"
 
-        last_error = ""
+        # 使用纯生成模式的 4_coder.md
+        current_code = await generate_llm_response(
+            "4_coder.md", constraints=constraints_str, blueprint_plan=blueprint_md
+        )
+        current_code = current_code.replace("```python", "").replace("```", "").strip()
 
-        for attempt in range(1, 4):
-            is_fix = attempt > 1
-            step_id = f"coder_{attempt}"
+        if run_dir:
+            save_artifact(run_dir, "4_code_draft.py", current_code)
+
+        await status_callback("result_code", "", current_code)
+        await status_callback(
+            "step_done", "Coder Done", "Draft Generated", step_id="coder_draft"
+        )
+
+        # =================================================
+        # STEP 5: STATIC FIXER (Ruff Analysis)
+        # =================================================
+        print(">>> [DEBUG] Step 5: Static Analysis")
+        MAX_STATIC_RETRIES = 3
+        static_pass = False
+
+        for i in range(MAX_STATIC_RETRIES + 1):
+            check_id = f"static_{i}"
+            current_time = datetime.datetime.now().strftime("%H:%M:%S")
             await status_callback(
                 "step_start",
-                f"Coder (Try {attempt})",
-                "Coding..." if not is_fix else "Fixing...",
-                step_id=step_id,
-                icon="fa-terminal",
+                f"Step 5: Static Check ({i + 1})",
+                f"Running Ruff [{current_time}]...",
+                step_id=check_id,
+                icon="fa-microscope",
             )
 
-            # 生成代码
-            # 注意：我们将 Markdown 格式的 blueprint 传给 prompt 中的 {blueprint_plan}
-            code = await generate_llm_response(
-                "4_coder.md",
-                execution_mode="CORRECTION" if is_fix else "GENERATION",
-                constraints=constraints_str,
-                blueprint_plan=blueprint_md,  # <--- 关键修改：传入 MD 蓝图
-                error_summary=f"Previous Error: {last_error}" if is_fix else "",
-            )
+            # --- [计时开始] Ruff ---
+            t_start = time.time()
+            is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
+            t_end = time.time()
 
-            # 清理可能的代码块标记
-            code = code.replace("```python", "").replace("```", "").strip()
+            duration_msg = f"Ruff Check ({i + 1}) took: {t_end - t_start:.4f}s"
+            print(f">>> [PERF] {duration_msg}")
+            await status_callback("log", "PERF", duration_msg)
+            # --- [计时结束] ---
 
-            if run_dir:
-                save_artifact(run_dir, f"4_code_try_{attempt}.py", code)
-
-            await status_callback("result_code", "", code)
-
-            # 执行代码
-            print(f">>> [DEBUG] Executing code (Length: {len(code)})")
-            success, output, error = execute_code(code)
-
-            if run_dir:
-                log_content = f"STDOUT:\n{output}\n\nSTDERR:\n{error}"
-                save_artifact(
-                    run_dir, f"4_execution_log_try_{attempt}.txt", log_content
+            # 【防御性跳过】
+            if "not found" in error_msg and "ruff" in error_msg:
+                print(">>> [WARN] Ruff tool not found. Skipping static check.")
+                await status_callback(
+                    "log", "WARN", "⚠️ Ruff tool not found. Skipping static check."
                 )
-
-            if success:
                 await status_callback(
                     "step_done",
-                    "Verification Passed",
-                    "Success!",
-                    step_id=step_id,
+                    "Skipped",
+                    "Ruff Missing",
+                    step_id=check_id,
                     is_success=True,
                 )
-                await status_callback("log", "STDOUT", output)
-                return
-            else:
-                last_error = error
+                static_pass = True
+                break
+
+            if is_valid:
+                static_pass = True
+                await status_callback("log", "SYSTEM", "Ruff Check Passed ✅")
                 await status_callback(
                     "step_done",
-                    "Verification Failed",
-                    "Retrying...",
-                    step_id=step_id,
+                    "Static Pass",
+                    "Code Valid",
+                    step_id=check_id,
+                    is_success=True,
+                )
+                break
+
+            if i < MAX_STATIC_RETRIES:
+                await status_callback(
+                    "step_done",
+                    "Static Issues",
+                    "Fixing...",
+                    step_id=check_id,
                     is_success=False,
                 )
-                await status_callback("log", "STDERR", error)
+
+                fix_id = f"static_fix_{i}"
+                await status_callback(
+                    "step_start",
+                    f"Step 5: Static Fix ({i + 1})",
+                    "Applying Fixes...",
+                    step_id=fix_id,
+                    icon="fa-wrench",
+                )
+
+                # --- [计时开始] LLM Fix ---
+                t_llm_start = time.time()
+                current_code = await generate_llm_response(
+                    "5_static_fixer.md", error_log=error_msg, previous_code=current_code
+                )
+                t_llm_end = time.time()
+
+                llm_msg = (
+                    f"LLM Static Fix ({i + 1}) took: {t_llm_end - t_llm_start:.4f}s"
+                )
+                print(f">>> [PERF] {llm_msg}")
+                await status_callback("log", "PERF", llm_msg)
+                # --- [计时结束] ---
+
+                current_code = (
+                    current_code.replace("```python", "").replace("```", "").strip()
+                )
+
+                if run_dir:
+                    save_artifact(
+                        run_dir, f"5_code_static_fix_{i + 1}.py", current_code
+                    )
+                await status_callback("result_code", "", current_code)
+                await status_callback(
+                    "step_done", "Fixed", "New Version", step_id=fix_id
+                )
+            else:
+                # 即使静态检查失败多次，也尝试进入运行时
+                await status_callback(
+                    "log",
+                    "WARN",
+                    "Static check failed multiple times. Proceeding to Runtime anyway.",
+                )
+
+                # 手动结束上一个 Check Step，防止前端转圈
+                await status_callback(
+                    "step_done",
+                    "Check Failed",
+                    "Force Run",
+                    step_id=check_id,
+                    is_success=False,
+                )
+
+                static_pass = True
+                break
+
+        # =================================================
+        # STEP 6: RUNTIME VERIFIER (Execution & Repair)
+        # =================================================
+        if static_pass:
+            print(">>> [DEBUG] Step 6: Runtime Verification")
+            # 【修改点 1/2】改为 3，提供 3 次修复机会 (Fix 1, 2, 3)
+            MAX_RUNTIME_RETRIES = 3
+
+            for attempt in range(1, MAX_RUNTIME_RETRIES + 2):
+                exec_id = f"runtime_{attempt}"
+
+                await status_callback(
+                    "step_start",
+                    f"Step 6: Execute ({attempt})",
+                    "Running in Sandbox...",
+                    step_id=exec_id,
+                    icon="fa-play",
+                )
+
+                print(f">>> [DEBUG] Executing code (Length: {len(current_code)})")
+
+                # --- 运行时计时 ---
+                t_exec_start = time.time()
+                success, output, error = execute_code(current_code, session_id)
+                t_exec_end = time.time()
+
+                exec_msg = (
+                    f"Runtime Exec ({attempt}) took: {t_exec_end - t_exec_start:.4f}s"
+                )
+                print(f">>> [PERF] {exec_msg}")
+                await status_callback("log", "PERF", exec_msg)
+                # ----------------
+
+                if run_dir:
+                    save_artifact(
+                        run_dir,
+                        f"6_exec_log_{attempt}.txt",
+                        f"STDOUT:\n{output}\nSTDERR:\n{error}",
+                    )
+
+                if success:
+                    await status_callback(
+                        "step_done",
+                        "Success",
+                        "Pipeline Complete!",
+                        step_id=exec_id,
+                        is_success=True,
+                    )
+                    await status_callback("log", "STDOUT", output)
+                    return
+
+                # 如果失败且有重试次数，则修复
+                if attempt <= MAX_RUNTIME_RETRIES:
+                    await status_callback(
+                        "step_done",
+                        "Runtime Error",
+                        "Repairing...",
+                        step_id=exec_id,
+                        is_success=False,
+                    )
+                    await status_callback("log", "STDERR", error)
+
+                    repair_id = f"runtime_fix_{attempt}"
+                    await status_callback(
+                        "step_start",
+                        f"Step 6: Repair ({attempt})",
+                        "Logic Repair...",
+                        step_id=repair_id,
+                        icon="fa-heart-pulse",
+                    )
+
+                    # --- 【修改点 2/2】LLM 运行时修复计时 + 前端推送 ---
+                    t_fix_start = time.time()
+                    # 使用 6_runtime_fixer.md 进行逻辑修复 (增量修复)
+                    current_code = await generate_llm_response(
+                        "6_runtime_fixer.md",
+                        constraints=constraints_str,
+                        blueprint_plan=blueprint_md,
+                        error_summary=f"Runtime Error:\n{error}",
+                        previous_code=current_code,
+                    )
+                    t_fix_end = time.time()
+
+                    rt_fix_msg = f"LLM Runtime Fix ({attempt}) took: {t_fix_end - t_fix_start:.4f}s"
+                    print(f">>> [PERF] {rt_fix_msg}")
+                    await status_callback("log", "PERF", rt_fix_msg)
+                    # ---------------------------------
+
+                    current_code = (
+                        current_code.replace("```python", "").replace("```", "").strip()
+                    )
+
+                    if run_dir:
+                        save_artifact(
+                            run_dir, f"6_code_runtime_fix_{attempt}.py", current_code
+                        )
+                    await status_callback("result_code", "", current_code)
+                    await status_callback(
+                        "step_done", "Repaired", "Ready to Retry", step_id=repair_id
+                    )
+                else:
+                    await status_callback(
+                        "step_done",
+                        "Failed",
+                        "Max Retries Reached",
+                        step_id=exec_id,
+                        is_success=False,
+                    )
+                    return
 
     except Exception as e:
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
         if run_dir:
             save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
-        await status_callback("fatal", "System Error", f"{str(e)}")
+        await status_callback("fatal", "System Error", str(e))

@@ -55,7 +55,7 @@ async def generate_llm_response(prompt_filename: str, **kwargs):
         # 特殊逻辑：Coder 的修复模式需要追加错误日志
         if kwargs.get("execution_mode") == "CORRECTION" and kwargs.get("error_summary"):
             repair_instruction = _load_prompt(
-                "repair_info.md", error_log=kwargs["error_summary"]
+                "6_runtime_fixer.md", error_log=kwargs["error_summary"]
             )
             prompt_content += "\n\n" + repair_instruction
 
