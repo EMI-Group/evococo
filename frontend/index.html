@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>evocoder v1.2 | Auto-Repair Engine</title>
+    <title>EvoCoder v1.2 | Auto-Repair Engine</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
@@ -32,7 +32,7 @@
         }
         .animate-fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }
 
-        /* --- 新增：Markdown 渲染样式 (Dark Mode) --- */
+        /* --- Markdown 渲染样式 (Dark Mode) --- */
         .markdown-view {
             padding: 1.5rem;
             line-height: 1.6;
@@ -47,7 +47,7 @@
         .markdown-view li { margin-bottom: 0.25rem; }
 
         .markdown-view p { margin-bottom: 1rem; }
-        .markdown-view strong { color: #60a5fa; font-weight: 600; } /* 重点文字用蓝色高亮 */
+        .markdown-view strong { color: #60a5fa; font-weight: 600; }
 
         /* 表格样式优化 */
         .markdown-view table { width: 100%; border-collapse: collapse; margin: 1rem 0; background-color: #1e293b; border-radius: 0.5rem; overflow: hidden; }
@@ -76,7 +76,7 @@
                 <i class="fa-solid fa-dna text-white"></i>
             </div>
             <div>
-                <h1 class="font-bold text-lg tracking-wide text-white">evocoder <span class="text-indigo-400">Canvas</span></h1>
+                <h1 class="font-bold text-lg tracking-wide text-white">EvoCoder <span class="text-indigo-400">Canvas</span></h1>
                 <p class="text-xs text-slate-400">Powered by Agentic Workflow</p>
             </div>
         </div>
@@ -249,27 +249,34 @@ end
                     addRagChips(step_id, extra_data);
                 }
 
-                if (title === 'Verification Passed' || (step_id === 'coder_3' && is_success === false)) {
+                // --- 核心修改：适配新的 6 步流程结束判断 ---
+                // 后端成功消息 Title 变成了 "Success"
+                // 后端失败消息 Title 变成了 "Failed" (Max Retries)
+                // 兼容旧的 "Verification Passed"
+                const isFinished = title === 'Success' || title === 'Failed' || title === 'Verification Passed';
+
+                if (isFinished) {
                     resetButton();
-                    log(is_success !== false ? "Pipeline Completed Successfully." : "Pipeline Finished: Max retries reached.", is_success !== false ? "text-green-400 font-bold" : "text-red-400 font-bold");
+                    const isSuccess = title === 'Success' || title === 'Verification Passed';
+                    const logMsg = isSuccess ? "Pipeline Completed Successfully." : "Pipeline Finished: Execution Failed.";
+                    const logClass = isSuccess ? "text-green-400 font-bold" : "text-red-400 font-bold";
+                    log(logMsg, logClass);
                 }
             }
-            // --- 核心修改：使用 'markdown' 类型调用 renderOutput ---
+            // Markdown 渲染
             else if (type === 'result_ir') {
                 renderOutput('view-ir', message, 'markdown');
-                // 可选：自动切换到 IR tab 查看分析结果
-                // switchTab('ir');
             }
             else if (type === 'result_blueprint') {
                 renderOutput('view-blueprint', message, 'markdown');
-                switchTab('blueprint'); // Blueprint 很重要，自动切换过去看
+                switchTab('blueprint');
             }
             else if (type === 'result_code') {
                 const codeBlock = document.getElementById('code-content');
                 codeBlock.textContent = message;
                 delete codeBlock.dataset.highlighted;
                 hljs.highlightElement(codeBlock);
-                switchTab('code');
+                switchTab('code'); // 自动切换到代码 Tab
             }
             else if (type === 'log') {
                 log(`[${title}] ${message}`);
@@ -296,13 +303,11 @@ end
             });
         }
 
-        // --- 核心修改：增加 Markdown 渲染逻辑 ---
         function renderOutput(id, content, type) {
             const el = document.getElementById(id);
             if (type === 'json') {
                 try {
                     const jsonObj = typeof content === 'string' ? JSON.parse(content) : content;
-                    // 简单的 JSON 高亮
                     const html = `<pre class="text-xs p-4 code-font">${JSON.stringify(jsonObj, null, 2)}</pre>`;
                     el.innerHTML = html;
                 } catch(e) {
@@ -310,7 +315,6 @@ end
                 }
             }
             else if (type === 'markdown') {
-                // 使用 marked.parse 解析 Markdown，并包裹在 .markdown-view 样式容器中
                 el.innerHTML = `<div class="markdown-view">${marked.parse(content)}</div>`;
             }
             else {
