@@ -25,20 +25,47 @@
         .step-line { position: absolute; left: 24px; top: 40px; bottom: -20px; width: 2px; background-color: #334155; z-index: 0; }
         .step-item:last-child .step-line { display: none; }
 
-        /* JSON Syntax Highlighting */
-        .json-key { color: #9cdcfe; }
-        .json-string { color: #ce9178; }
-        .json-number { color: #b5cea8; }
-        .json-boolean { color: #569cd6; }
-
-        pre { white-space: pre-wrap; word-wrap: break-word; }
-
         /* Animations */
         @keyframes fadeInUp {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
         .animate-fade-in-up { animation: fadeInUp 0.3s ease-out forwards; }
+
+        /* --- 新增：Markdown 渲染样式 (Dark Mode) --- */
+        .markdown-view {
+            padding: 1.5rem;
+            line-height: 1.6;
+            color: #cbd5e1;
+        }
+        .markdown-view h1 { font-size: 1.5rem; font-weight: 700; color: #fff; margin-top: 1.5rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid #334155; }
+        .markdown-view h2 { font-size: 1.25rem; font-weight: 600; color: #f1f5f9; margin-top: 1.5rem; margin-bottom: 0.75rem; }
+        .markdown-view h3 { font-size: 1.1rem; font-weight: 600; color: #e2e8f0; margin-top: 1rem; margin-bottom: 0.5rem; }
+
+        .markdown-view ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 1rem; }
+        .markdown-view ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 1rem; }
+        .markdown-view li { margin-bottom: 0.25rem; }
+
+        .markdown-view p { margin-bottom: 1rem; }
+        .markdown-view strong { color: #60a5fa; font-weight: 600; } /* 重点文字用蓝色高亮 */
+
+        /* 表格样式优化 */
+        .markdown-view table { width: 100%; border-collapse: collapse; margin: 1rem 0; background-color: #1e293b; border-radius: 0.5rem; overflow: hidden; }
+        .markdown-view th { background-color: #0f172a; color: #94a3b8; font-weight: 600; text-align: left; padding: 0.75rem 1rem; border-bottom: 1px solid #334155; }
+        .markdown-view td { padding: 0.75rem 1rem; border-bottom: 1px solid #334155; color: #cbd5e1; font-size: 0.9em; }
+        .markdown-view tr:last-child td { border-bottom: none; }
+        .markdown-view tr:hover { background-color: #334155; }
+
+        /* 代码块样式 */
+        .markdown-view code { background-color: #334155; color: #e2e8f0; padding: 0.2rem 0.4rem; rounded: 0.25rem; font-family: 'JetBrains Mono', monospace; font-size: 0.85em; }
+        .markdown-view pre { background-color: #0f172a; padding: 1rem; rounded: 0.5rem; overflow-x: auto; margin-bottom: 1rem; border: 1px solid #334155; }
+        .markdown-view pre code { background-color: transparent; padding: 0; color: inherit; }
+
+        /* 引用块 */
+        .markdown-view blockquote { border-left: 4px solid #3b82f6; padding-left: 1rem; color: #94a3b8; font-style: italic; margin-bottom: 1rem; }
+
+        /* 链接 */
+        .markdown-view a { color: #60a5fa; text-decoration: underline; }
     </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden">
@@ -112,8 +139,8 @@ end
         <section class="w-1/3 min-w-[400px] flex flex-col bg-slate-950">
             <div class="flex border-b border-slate-800 bg-slate-900">
                 <button id="tab-code" class="tab-btn flex-1 px-4 py-3 text-xs font-semibold text-blue-400 border-b-2 border-blue-400 bg-slate-800" onclick="switchTab('code')">Code (.py)</button>
-                <button id="tab-blueprint" class="tab-btn flex-1 px-4 py-3 text-xs font-semibold text-slate-500 hover:text-slate-300" onclick="switchTab('blueprint')">Blueprint</button>
-                <button id="tab-ir" class="tab-btn flex-1 px-4 py-3 text-xs font-semibold text-slate-500 hover:text-slate-300" onclick="switchTab('ir')">IR</button>
+                <button id="tab-blueprint" class="tab-btn flex-1 px-4 py-3 text-xs font-semibold text-slate-500 hover:text-slate-300" onclick="switchTab('blueprint')">Blueprint (MD)</button>
+                <button id="tab-ir" class="tab-btn flex-1 px-4 py-3 text-xs font-semibold text-slate-500 hover:text-slate-300" onclick="switchTab('ir')">Analyst Report</button>
             </div>
 
             <div class="flex-1 relative overflow-hidden">
@@ -121,12 +148,12 @@ end
                     <pre><code id="code-content" class="language-python h-full p-4"># Generated code will appear here...</code></pre>
                 </div>
 
-                <div id="view-blueprint" class="absolute inset-0 p-4 overflow-auto code-font text-sm bg-slate-950 hidden">
-                    <div class="text-slate-500 italic text-center mt-10">Blueprint JSON pending...</div>
+                <div id="view-blueprint" class="absolute inset-0 overflow-auto bg-slate-950 hidden">
+                    <div class="text-slate-500 italic text-center mt-10">Blueprint pending...</div>
                 </div>
 
-                <div id="view-ir" class="absolute inset-0 p-4 overflow-auto code-font text-sm bg-slate-950 hidden">
-                    <div class="text-slate-500 italic text-center mt-10">Intermediate Representation pending...</div>
+                <div id="view-ir" class="absolute inset-0 overflow-auto bg-slate-950 hidden">
+                    <div class="text-slate-500 italic text-center mt-10">Analysis Report pending...</div>
                 </div>
             </div>
 
@@ -156,7 +183,6 @@ end
 
     <script>
         // --- WebSocket Configuration ---
-        // Change 'localhost' to your server IP if deploying
         const WS_URL = "ws://localhost:8000/ws";
         let socket;
 
@@ -180,7 +206,6 @@ end
             };
         }
 
-        // Auto connect
         connect();
 
         // --- Core Logic ---
@@ -189,9 +214,6 @@ end
             const code = document.getElementById('matlab-input').value;
             if(!code.trim()) { alert("Please enter MATLAB code."); return; }
 
-            // UI Reset
-            // 修正：先清空父容器，此时子元素 empty-state 也会被自动移除，
-            // 不需要再手动去 remove class 'hidden' 或操作 empty-state，否则会报错 null property
             document.getElementById('flow-container').innerHTML = '';
 
             // Reset Views
@@ -199,11 +221,8 @@ end
             document.getElementById('view-blueprint').innerHTML = '<div class="text-slate-500 italic text-center mt-10">Processing...</div>';
             document.getElementById('view-ir').innerHTML = '<div class="text-slate-500 italic text-center mt-10">Processing...</div>';
 
-            // Send
             if(socket && socket.readyState === WebSocket.OPEN) {
                 socket.send(JSON.stringify({ code: code }));
-
-                // Button State
                 const btn = document.getElementById('run-btn');
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Processing...';
@@ -216,12 +235,9 @@ end
         function handleServerMessage(data) {
             const { type, title, message, step_id, extra_data, is_success } = data;
 
-            // 1. New Step Started
             if (type === 'step_start') {
                 addStepUI(step_id, title, message, data.icon || 'fa-circle-notch');
             }
-
-            // 2. Step Finished
             else if (type === 'step_done') {
                 const color = is_success === false ? 'text-red-400' : 'text-green-400';
                 const bgColor = is_success === false ? 'bg-red-900/30' : 'bg-green-900/30';
@@ -229,51 +245,35 @@ end
 
                 updateStepStatus(step_id, statusText, color, bgColor);
 
-                // Special handling for RAG step to show chips
                 if (step_id === 'rag' && extra_data && extra_data.length > 0) {
                     addRagChips(step_id, extra_data);
                 }
 
-                // --- 核心更新：检测流程结束 (成功或失败都复位) ---
-
-                // 情况 1: 验证通过 (Success)
-                if (title === 'Verification Passed') {
+                if (title === 'Verification Passed' || (step_id === 'coder_3' && is_success === false)) {
                     resetButton();
-                    log("Pipeline Completed Successfully.", "text-green-400 font-bold");
-                }
-
-                // 情况 2: 最终失败 (Try 3 失败，即 step_id 为 coder_3 且 failed)
-                // 这意味着重试次数耗尽，流程也结束了
-                else if (step_id === 'coder_3' && is_success === false) {
-                    resetButton();
-                    log("Pipeline Finished: Max retries reached.", "text-red-400 font-bold");
+                    log(is_success !== false ? "Pipeline Completed Successfully." : "Pipeline Finished: Max retries reached.", is_success !== false ? "text-green-400 font-bold" : "text-red-400 font-bold");
                 }
             }
-
-            // 3. Data Payloads (Update Tabs)
+            // --- 核心修改：使用 'markdown' 类型调用 renderOutput ---
             else if (type === 'result_ir') {
-                renderOutput('view-ir', message, 'json');
-                // Optional: switchTab('ir');
+                renderOutput('view-ir', message, 'markdown');
+                // 可选：自动切换到 IR tab 查看分析结果
+                // switchTab('ir');
             }
             else if (type === 'result_blueprint') {
-                renderOutput('view-blueprint', message, 'json');
-                switchTab('blueprint'); // Auto-switch to show progress
+                renderOutput('view-blueprint', message, 'markdown');
+                switchTab('blueprint'); // Blueprint 很重要，自动切换过去看
             }
             else if (type === 'result_code') {
-                // Update Code View
                 const codeBlock = document.getElementById('code-content');
                 codeBlock.textContent = message;
-                delete codeBlock.dataset.highlighted; // Force re-highlight
+                delete codeBlock.dataset.highlighted;
                 hljs.highlightElement(codeBlock);
-                switchTab('code'); // Auto-switch to final code
+                switchTab('code');
             }
-
-            // 4. Logs
             else if (type === 'log') {
                 log(`[${title}] ${message}`);
             }
-
-            // 5. Fatal Error
             else if (type === 'fatal') {
                 log(message, "text-red-500 font-bold");
                 resetButton();
@@ -296,18 +296,24 @@ end
             });
         }
 
+        // --- 核心修改：增加 Markdown 渲染逻辑 ---
         function renderOutput(id, content, type) {
             const el = document.getElementById(id);
             if (type === 'json') {
                 try {
-                    // Try to pretty print JSON if it's stringified
                     const jsonObj = typeof content === 'string' ? JSON.parse(content) : content;
-                    const html = syntaxHighlight(JSON.stringify(jsonObj, null, 2));
-                    el.innerHTML = `<pre class="text-xs p-4">${html}</pre>`;
+                    // 简单的 JSON 高亮
+                    const html = `<pre class="text-xs p-4 code-font">${JSON.stringify(jsonObj, null, 2)}</pre>`;
+                    el.innerHTML = html;
                 } catch(e) {
                     el.textContent = content;
                 }
-            } else {
+            }
+            else if (type === 'markdown') {
+                // 使用 marked.parse 解析 Markdown，并包裹在 .markdown-view 样式容器中
+                el.innerHTML = `<div class="markdown-view">${marked.parse(content)}</div>`;
+            }
+            else {
                 el.textContent = content;
             }
         }
@@ -335,12 +341,10 @@ end
             const el = document.getElementById(`step-${id}`);
             if(!el) return;
 
-            // Stop pulse
             el.querySelector('.status-bg').classList.remove('animate-pulse');
             el.querySelector('.status-bg').classList.remove('border-blue-500/50');
             el.querySelector('.status-bg').classList.add('border-slate-600');
 
-            // Update Tag
             const tag = el.querySelector('.step-tag');
             tag.innerText = status;
             tag.className = `step-tag text-[10px] px-1.5 py-0.5 rounded ${bgColorClass || 'bg-slate-700'} ${textColorClass}`;
@@ -391,27 +395,7 @@ end
             btn.innerHTML = '<i class="fa-solid fa-play"></i> Start Pipeline';
         }
 
-        function syntaxHighlight(json) {
-            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-                var cls = 'json-number';
-                if (/^"/.test(match)) {
-                    if (/:$/.test(match)) {
-                        cls = 'json-key';
-                    } else {
-                        cls = 'json-string';
-                    }
-                } else if (/true|false/.test(match)) {
-                    cls = 'json-boolean';
-                } else if (/null/.test(match)) {
-                    cls = 'json-boolean';
-                }
-                return '<span class="' + cls + '">' + match + '</span>';
-            });
-        }
-
         function copyCurrentTab() {
-            // Determine active tab
             let content = "";
             if(!document.getElementById('view-code').classList.contains('hidden')) {
                 content = document.getElementById('code-content').textContent;
