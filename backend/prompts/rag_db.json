@@ -1,19 +1,19 @@
 {
-  "version": "1.0",
+  "version": "1.2",
   "rules": [
     {
       "id": "Bug #1 (Integer Sentinel)",
       "description": "Never initialize integer tensors (like Rank, FrontNo) with torch.inf. It causes overflow/conversion errors.",
       "action": "must_not",
-      "keywords": ["rank", "front", "index", "int", "integer"],
+      "keywords": ["rank", "front", "index", "int", "integer", "inf", "sentinel"],
       "always_apply": true,
-      "instruction": "Use `sentinel = torch.iinfo(torch.int32).max` instead of `torch.inf`."
+      "instruction": "Use `sentinel = torch.iinfo(torch.int32).max` instead of `torch.inf` for any integer-type tensor."
     },
     {
       "id": "Bug #2 (Ceil Semantics)",
       "description": "torch.ceil on Python scalars behaves differently than expected in some PyTorch versions.",
       "action": "must_not",
-      "keywords": ["ceil", "round"],
+      "keywords": ["ceil", "round", "scalar"],
       "always_apply": true,
       "instruction": "Use integer math `(N + 1) // 2` instead of `torch.ceil`."
     },
@@ -21,9 +21,9 @@
       "id": "Bug #3 (Unique Stability)",
       "description": "torch.unique(dim=0) is non-deterministic or unstable for return_inverse in some versions.",
       "action": "must_not",
-      "keywords": ["unique", "duplicate"],
+      "keywords": ["unique", "duplicate", "distinct"],
       "always_apply": true,
-      "instruction": "Use `evomo.utils.unique_rows_sorted`."
+      "instruction": "Use `evomo.utils.unique_rows_sorted(x)` instead of `torch.unique`."
     },
     {
       "id": "Bug #5 (Torch Cond)",
@@ -39,15 +39,47 @@
       "action": "must",
       "keywords": ["crowding", "distance", "cd"],
       "always_apply": false,
-      "instruction": "Call as `crowding_distance(objs, mask)` where mask is boolean [N]. Do not slice objs."
+      "instruction": "Call as `crowding_distance(full_objs, mask)`. Do NOT pass sliced `objs[mask]`. Mask must be boolean [N]."
     },
     {
-      "id": "Bug #7 (SDR Dominance Matrix)",
-      "description": "Special Dominance Relationship (SDR) requires strict mutual exclusion logic for unordered pairs.",
+      "id": "Bug #7 (SDR Dominance Helper)",
+      "description": "SDR requires strict mutual exclusion logic. Unordered pair logic is complex and prone to errors if inlined.",
       "action": "must",
-      "keywords": ["dominance", "sdr", "theta", "angle"],
+      "keywords": ["dominance", "sdr", "theta", "angle", "sort"],
       "always_apply": false,
-      "instruction": "Implement helper `_calculate_sdr_dominance_matrix(norm_p, theta)` using broadcasting and triu_indices."
+      "instruction": "MUST implement helper `_calculate_sdr_dominance_matrix(norm_p, theta)`. Do NOT use pair-indexed gather (norm_p[i] < norm_p[j])."
+    },
+    {
+      "id": "Bug #8 (Mutable Semantics)",
+      "description": "Mutable objects (like Population) are tensor-like Buffers and DO NOT have a `.value` attribute.",
+      "action": "must_not",
+      "keywords": [".value", "mutable", "buffer", "state"],
+      "always_apply": true,
+      "instruction": "Treat Mutable objects directly as tensors. Never access `.value` attribute."
+    },
+    {
+      "id": "Bug #9 (Front Assignment Loop)",
+      "description": "Premature break in front assignment loops (e.g., `if not mask.any(): break`) can cause infinite loops or logic errors.",
+      "action": "must_not",
+      "keywords": ["break", "while", "front", "mask", "loop", "non-dominated", "sort", "rank", "pareto", "ndsort"],
+      "always_apply": false,
+      "instruction": "Do NOT use break statements based on empty masks in front assignment loops. Trust the dominance logic."
+    },
+    {
+      "id": "Bug #10 (MATLAB Dim Mapping)",
+      "description": "MATLAB and PyTorch dimension indices differ. Direct translation of sum/min/max logic fails without mapping.",
+      "action": "must",
+      "keywords": ["dim", "dimension", "sum", "min", "max", "matlab"],
+      "always_apply": true,
+      "instruction": "Map MATLAB dim=1 (col-wise) to PyTorch dim=0. Map MATLAB dim=2 (row-wise) to PyTorch dim=1."
+    },
+    {
+      "id": "Bug #11 (Forbidden Imports)",
+      "description": "Strict compliance with EvoX ecosystem. No external math libraries or internal SDKs.",
+      "action": "must_not",
+      "keywords": ["numpy", "pymoo", "platemo", "evott", "jax"],
+      "always_apply": true,
+      "instruction": "Do NOT import numpy, pymoo, platemo, or evott.*. Use ONLY torch, evox.*, and evomo.*."
     }
   ]
 }
