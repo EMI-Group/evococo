@@ -4,40 +4,71 @@ import traceback
 import os
 import datetime
 import uuid
-import time  # 用于计时
+import time
+
+# 注意：这里导入了 _load_prompt，请确保 generator.py 里没有把 _load_prompt 设为私有
 from .generator import generate_llm_response
 from .executor import execute_code, check_syntax_with_ruff
 
-# --- 配置部分 ---
-RAG_DB = [
-    {
-        "keywords": ["crowding", "distance", "cd"],
-        "id": "Bug #6",
-        "rule": "CrowdingDistance requires full population + boolean mask.",
-    },
-    {
-        "keywords": ["dominance", "sort", "nds"],
-        "id": "Bug #7",
-        "rule": "Implement helper _calculate_sdr_dominance_matrix.",
-    },
-    {
-        "keywords": ["rank", "front", "index"],
-        "id": "Bug #1",
-        "rule": "Never init int tensors with torch.inf.",
-    },
-    {
-        "keywords": ["unique"],
-        "id": "Bug #3",
-        "rule": "Use evomo.utils.unique_rows_sorted instead of torch.unique.",
-    },
-    {"keywords": ["ceil"], "id": "Bug #2", "rule": "Do not use torch.ceil on scalars."},
-]
+# --- 路径配置 ---
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
+PROMPTS_DIR = os.path.join(BACKEND_DIR, "prompts")
+DATABASE_DIR = os.path.join(BACKEND_DIR, "database")
+
+# 规则库路径
+RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
+# 全局规范路径
+GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
 
 
-# --- 辅助函数 ---
+# --- 数据加载辅助函数 ---
+
+
+def load_rag_db():
+    """从 JSON 文件加载 RAG 规则库"""
+    if os.path.exists(RULES_DB_PATH):
+        try:
+            with open(RULES_DB_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "rules" in data:
+                    return data["rules"]
+                return data
+        except Exception as e:
+            print(f">>> [ERROR] Failed to load rag_db.json: {e}")
+            return []
+    else:
+        print(f">>> [WARN] Rules DB not found at {RULES_DB_PATH}")
+        return []
+
+
+def load_global_spec():
+    """从 Markdown 文件加载全局规范"""
+    if os.path.exists(GLOBAL_SPEC_PATH):
+        try:
+            with open(GLOBAL_SPEC_PATH, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            print(f">>> [ERROR] Failed to load 0_global_spec.md: {e}")
+            return "Error: Global Spec not found."
+    return ""
+
+
+def load_resource(filename):
+    """加载资源文件 (SDK, Examples)"""
+    path = os.path.join(PROMPTS_DIR, filename)
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception as e:
+            print(f">>> [ERROR] Failed to load {filename}: {e}")
+    return ""
+
+
+# --- 通用辅助函数 ---
 
 
 def ensure_history_dir():
@@ -87,6 +118,13 @@ def extract_json(text):
 async def run_pipeline(matlab_code: str, status_callback):
     print(">>> [DEBUG] run_pipeline started!")
 
+    # 0. 加载外部数据
+    rag_db = load_rag_db()
+    global_spec_content = load_global_spec()
+    # 加载 Prompt 资源
+    asset_lib_content = load_resource("resources_assets.md")
+    few_shot_content = load_resource("resources_examples.md")
+
     # 1. 初始化运行目录和 Session
     try:
         run_dir = ensure_history_dir()
@@ -117,7 +155,9 @@ async def run_pipeline(matlab_code: str, status_callback):
             icon="fa-magnifying-glass",
         )
 
-        ir_md = await generate_llm_response("1_analyst.md", matlab_code=matlab_code)
+        ir_md = await generate_llm_response(
+            "1_analyst.md", matlab_code=matlab_code, global_spec=global_spec_content
+        )
 
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
@@ -139,16 +179,32 @@ async def run_pipeline(matlab_code: str, status_callback):
             icon="fa-book-open",
         )
 
-        all_rules_desc = "\n".join([f"[ID: {r['id']}] {r['rule']}" for r in RAG_DB])
+        # 构建 RAG Context
+        rules_context_list = []
+        for r in rag_db:
+            tag = "[UNIVERSAL]" if r.get("always_apply") else "[CONDITIONAL]"
+            desc = r.get("description", "No description")
+            keywords = ", ".join(r.get("keywords", []))
+            rule_entry = f"ID: {r['id']}\nType: {tag}\nDesc: {desc}\nKeywords: {keywords}"
+            rules_context_list.append(rule_entry)
+
+        all_rules_desc = "\n---\n".join(rules_context_list)
+
         rag_str = await generate_llm_response(
             "2_rag_selector.md", rules_context=all_rules_desc, analyst_report=ir_md
         )
 
         rag_json = extract_json(rag_str)
         selected_ids = rag_json.get("selected_rule_ids", [])
-        matched_rules_text = "\n".join(
-            [f"[{r['id']}] {r['rule']}" for r in RAG_DB if r["id"] in selected_ids]
-        )
+
+        # 构建 matched_rules_text
+        matched_rules_list = []
+        for r in rag_db:
+            if r["id"] in selected_ids:
+                instruction = r.get("instruction", r.get("description", ""))
+                matched_rules_list.append(f"[{r['id']}] {instruction}")
+
+        matched_rules_text = "\n".join(matched_rules_list)
 
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_json)
@@ -199,9 +255,15 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         constraints_str = matched_rules_text if matched_rules_text else "None"
 
-        # 使用纯生成模式的 4_coder.md
+        # 【核心修改】
+        # 1. 移除了 execution_mode 和 error_summary (因为 prompt v3.1 删除了这两个占位符)
+        # 2. 注入了 asset_library and few_shot_examples
         current_code = await generate_llm_response(
-            "4_coder.md", constraints=constraints_str, blueprint_plan=blueprint_md
+            "4_coder.md",
+            constraints=constraints_str,
+            blueprint_plan=blueprint_md,
+            asset_library=asset_lib_content,    # <--- SDK
+            few_shot_examples=few_shot_content, # <--- 范例
         )
         current_code = current_code.replace("```python", "").replace("```", "").strip()
 
@@ -269,21 +331,17 @@ async def run_pipeline(matlab_code: str, status_callback):
                 )
                 break
 
-            # 如果检测失败 (is_valid == False)，执行以下逻辑
+            # 如果检测失败
             if i < MAX_STATIC_RETRIES:
-                # --- 【新增 1】保存完整报错到文件 ---
                 if run_dir:
                     save_artifact(run_dir, f"5_ruff_error_{i + 1}.txt", error_msg)
 
-                # --- 【新增 2】推送到前端小控制台 ---
-                # 截取前 300 字符，防止控制台刷屏，并将换行符替换为空格以便单行显示
                 short_err = (
                     error_msg[:300].replace("\n", " ") + "..."
                     if len(error_msg) > 300
                     else error_msg.replace("\n", " ")
                 )
                 await status_callback("log", "RUFF_ERR", short_err)
-                # --------------------------------
 
                 await status_callback(
                     "step_done",
@@ -333,7 +391,6 @@ async def run_pipeline(matlab_code: str, status_callback):
                 if run_dir:
                     save_artifact(run_dir, f"5_ruff_error_FINAL.txt", error_msg)
 
-                # 推送最终错误提示
                 short_err = error_msg[:300].replace("\n", " ") + "..."
                 await status_callback("log", "RUFF_FAIL", short_err)
 
