@@ -11,10 +11,8 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 * **Bounds**: `lower_bound` and `upper_bound` are 1D tensors of shape `(D,)`.
 
 ## 3. Key Methods
-* `setup(self, key)`: Initialize state (population).
-* `step(self, state)`: Perform one iteration (mating -> mutation -> selection).
-    * **Input**: Current `state`.
-    * **Output**: New `state` containing the updated population.
+* `init_step(self)`: Initialize internal states (e.g., population and fitness).
+* `step(self)`: Perform one iteration (mating -> mutation -> selection), updating internal states in-place.
 
 ## 4. Forbidden Patterns
 * **NO** `numpy` (unless absolutely necessary). Use `torch`.
