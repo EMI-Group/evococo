@@ -80,6 +80,38 @@
       "keywords": ["numpy", "pymoo", "platemo", "evott", "jax"],
       "always_apply": true,
       "instruction": "Do NOT import numpy, pymoo, platemo, or evott.*. Use ONLY torch, evox.*, and evomo.*."
+    },
+    {
+      "id": "Bug #12 (Vectorized Selection)",
+      "description": "Iterating through Pareto fronts (e.g., 'for i in fronts') triggers CPU-GPU sync overhead and prevents compilation.",
+      "action": "must_not",
+      "keywords": ["front", "selection", "fill", "loop", "nsga", "sort"],
+      "always_apply": true,
+      "instruction": "Do NOT use loops to fill the population front-by-front. Instead, compute Rank and CrowdingDistance for ALL individuals, use `lexsort` to sort by (Rank, -CD), and then slice `[:pop_size]`."
+    },
+    {
+      "id": "Bug #13 (Safe Division)",
+      "description": "Division by zero in normalization or angle calculation causes NaN propagation.",
+      "action": "must",
+      "keywords": ["division", "normalize", "angle", "cosine", "dist", "/"],
+      "always_apply": true,
+      "instruction": "Always add epsilon (1e-6) to the denominator: `x / (norm + 1e-6)`. Never divide directly."
+    },
+    {
+      "id": "Bug #14 (Reference Vector Init)",
+      "description": "Decomposition algorithms (MOEA/D, RVEA) require uniform reference vectors (V) on the unit hyperplane.",
+      "action": "must",
+      "keywords": ["decomposition", "moea/d", "rvea", "reference", "vector", "weight", "tchebycheff"],
+      "always_apply": false,
+      "instruction": "Initialize `self.v` using `evox.operators.sampling.uniform_sampling`. Do NOT manually create grids with loops."
+    },
+    {
+      "id": "Bug #16 (Randint Device)",
+      "description": "torch.randint/rand/randn creates tensors on CPU by default, causing device mismatch errors.",
+      "action": "must",
+      "keywords": ["rand", "randint", "sample", "mutation", "crossover"],
+      "always_apply": true,
+      "instruction": "ALWAYS specify `device=...` in random generation functions: `torch.randint(..., device=self.lb.device)`."
     }
   ]
 }
