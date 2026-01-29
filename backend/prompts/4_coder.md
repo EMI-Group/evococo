@@ -32,14 +32,16 @@ Follow this coding style (imports, Mutable usage, class structure).
 2.  **Mutable Semantics**: Use `self.pop = Mutable(...)`. **NEVER** use `.value`.
 3.  **Tensor Shapes**: Strictly follow the "Tensor Map" in the Blueprint.
 4.  **RAG Compliance**: If the Blueprint mentions a "Hard Constraint" (e.g., specific helper function or sentinel value), you **MUST** implement it exactly.
-
-5.  **NO NEW CONTROL-FLOW ESCAPES (STRICT)**:
-    - You MUST NOT introduce any new `break`, `continue`, `return` (early return), or `raise` statements.
-    - You MUST NOT add “safety” branches like `if not mask.any(): break` or `else: break` that terminate loops early.
-    - If conditional behavior is required, implement it with **tensor-safe vectorization**:
-      `torch.where`, boolean masks, `clamp`, `nan_to_num`, safe indexing, reshaping/broadcasting, dtype/device casting.
-    - If a loop *must* terminate, it must do so **only via its original loop condition** (e.g., updating masks/counters), not via `break/continue/early return`.
-
+5.  **NO EXTRA CONTROL-FLOW (ABSOLUTE)**:
+    - The output code MUST NOT contain the standalone keywords: `break` or `continue` anywhere.
+    - The output code MUST NOT introduce any early `return` statements inside algorithm logic.
+    - You MUST NOT add any “safety”, “fallback”, “should not happen”, or “deadlock prevention” branches that change termination behavior.
+      Examples that are strictly forbidden:
+        - `if not mask.any(): break`
+        - `else: break`
+        - `if ...: return`
+        - `if ...: raise ...` (except the single `raise NotImplementedError` placeholder in the skeleton BEFORE real logic is implemented)
+    - Assume the MATLAB logic is correct. Do NOT add extra termination checks or guards. Translate the logic exactly without introducing new control-flow exits.
 6.  **No Extra Loops**:
     - Do NOT introduce new Python `for`/`while` loops beyond what the Blueprint explicitly requires.
     - Prefer vectorized tensor operations over Python loops.
@@ -92,7 +94,10 @@ class <YourAlgoName>(Algorithm):
         raise NotImplementedError
         
 # ... Helper Functions (if requested by Blueprint) ...
+```
+[CRITICAL REQUIREMENT] After the class definition and helper functions, you MUST append the following verification block VERBATIM (word-for-word) at the end of the file. The only allowed change is replacing <YourAlgoName> with the actual class name you defined above.
 
+```python
 # === FIXED DEMO BLOCK ===
 # This block MUST be appended at the end of the file.
 if __name__ == "__main__":
@@ -103,7 +108,7 @@ if __name__ == "__main__":
 
     torch.set_default_device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # UPDATE: Replace <YourAlgoName> with the actual class name
+    # <YourAlgoName> must be replaced by your actual class name
     algo = <YourAlgoName>(pop_size=100, n_objs=3, lb=-torch.zeros(12), ub=torch.ones(12))
     prob = DTLZ2(m=3)
     pf = prob.pf()

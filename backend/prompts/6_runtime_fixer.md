@@ -23,41 +23,42 @@ The code passed static analysis but failed during runtime execution.
 {previous_code}
 
 ## 5. Task & Requirement
-You must fix the runtime bug while **STRICTLY PRESERVING** the existing code structure and runtime semantics.
+You must fix the runtime bug inside `class <YourAlgoName>`.
 
-**CRITICAL RULES (DO NOT BREAK):**
+**CRITICAL IMMUTABILITY RULE (READ CAREFULLY):**
+The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN STANDARD**.
+* It defines the **Expected Interface** (constructor arguments, property access).
+* **You are STRICTLY FORBIDDEN from modifying the code inside `if __name__ == "__main__":`**.
+* If the error is in the main block (e.g., `TypeError: __init__() takes 4 arguments but 5 were given`), **you MUST fix your Class definition** to match the main block's call signature. Do NOT change the call signature in the main block.
+* **Output the FULL file**, including the untouched main block.
+
+**OTHER CRITICAL RULES:**
 1. **NO Refactoring**: Do NOT change the class structure or method signatures.
 2. **Workflow Integrity**: You MUST keep both `init_step(self)` and `step(self)` methods. Do NOT change them into `ask()` and `tell()`.
 3. **Inheritance**: Must inherit from `evox.core.Algorithm`.
-4. **Demo Block**: Do NOT delete or modify the `if __name__ == "__main__":` demo block at the end (unless fixing imports inside it).
-
-5. **NO NEW CONTROL-FLOW ESCAPES (STRICT)**:
-   - You MUST NOT introduce any new `break`, `continue`, `return` (early return), or `raise` statements that were not present in `{previous_code}`.
+4. **NO NEW CONTROL-FLOW ESCAPES**:
+   - You MUST NOT introduce any new `break`, `continue`, `return` (early return), or `raise` statements.
    - You MUST NOT introduce any new Python loops (`for/while`) that were not present in `{previous_code}`.
-   - You MUST NOT change loop termination behavior or iteration counts.
-   - If `{previous_code}` originally contains `break/continue/early return`, you may keep them, but you MUST NOT add additional ones.
+   - If `{previous_code}` originally contains them, you may keep them, but do not add more.
 
-6. **Scope of Fix (Allowed Changes)**:
-   - You CAN and MUST modify the internal logic of `__init__`, `init_step`, or `step` to fix runtime issues (shape mismatch, device mismatch, dtype mismatch, invalid indexing, NaNs, etc.).
-   - Prefer **tensor-safe and vectorized fixes**: `torch.where`, masking, `clamp`, `nan_to_num`, safe indexing, broadcasting fixes, reshaping, `.to(device)`, dtype casting, etc.
-   - If logic needs conditional behavior, implement it with tensor masks / vectorized selection instead of `break/continue/early return`.
+5. **Scope of Fix**:
+   - Modify internal logic of `__init__`, `init_step`, or `step` to fix runtime issues (shape, device, dtype, NaNs).
+   - Prefer **tensor-safe and vectorized fixes**.
 
-7. **Semantic Preservation**:
+6. **Semantic Preservation**:
    - Do NOT alter algorithmic intent. Only fix the minimal root cause of the crash.
    - Do NOT silence errors by skipping computation steps. All originally intended computations must still occur.
 
 ### Output Format
 You must provide an **Analysis Block** followed by the **FULL Corrected Code**.
 
-**1. Analysis Block**  
-Wrap your reasoning in `<analysis>` tags.
-* Identify the exact line number causing the error (check if it's in `init_step` or `step`).
-* Explain WHY it failed (e.g., "Tensor shape (N, 3) vs (N, 1)", "Index out of bounds", "device mismatch cpu vs cuda").
-* Compare with MATLAB logic if needed.
-* State your fix plan.
+**1. Analysis Block** Wrap your reasoning in `<analysis>` tags.
+* Identify the exact line number causing the error.
+* Explain WHY it failed (e.g., "Tensor shape mismatch", "Device mismatch").
+* State your fix plan (e.g., "Update __init__ arguments to match main block", "Add unsqueeze(1) for broadcasting").
 * Explicitly confirm: **"No new break/continue/early-return/raise statements were added."**
 
 **2. Code Block**
 * Output the **FULL** corrected code.
 * **DO NOT** use markdown backticks for the code part (just raw text).
-* **DO NOT** omit any parts; return the complete file.
+* **DO NOT** omit any parts; return the complete file including the verification block.
