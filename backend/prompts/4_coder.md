@@ -33,6 +33,17 @@ Follow this coding style (imports, Mutable usage, class structure).
 3.  **Tensor Shapes**: Strictly follow the "Tensor Map" in the Blueprint.
 4.  **RAG Compliance**: If the Blueprint mentions a "Hard Constraint" (e.g., specific helper function or sentinel value), you **MUST** implement it exactly.
 
+5.  **NO NEW CONTROL-FLOW ESCAPES (STRICT)**:
+    - You MUST NOT introduce any new `break`, `continue`, `return` (early return), or `raise` statements.
+    - You MUST NOT add “safety” branches like `if not mask.any(): break` or `else: break` that terminate loops early.
+    - If conditional behavior is required, implement it with **tensor-safe vectorization**:
+      `torch.where`, boolean masks, `clamp`, `nan_to_num`, safe indexing, reshaping/broadcasting, dtype/device casting.
+    - If a loop *must* terminate, it must do so **only via its original loop condition** (e.g., updating masks/counters), not via `break/continue/early return`.
+
+6.  **No Extra Loops**:
+    - Do NOT introduce new Python `for`/`while` loops beyond what the Blueprint explicitly requires.
+    - Prefer vectorized tensor operations over Python loops.
+
 ## Output Contract
 Output **ONLY** the raw Python code. Do not wrap in Markdown fences (like ```python) if possible.
 
@@ -93,18 +104,18 @@ if __name__ == "__main__":
     torch.set_default_device("cuda" if torch.cuda.is_available() else "cpu")
 
     # UPDATE: Replace <YourAlgoName> with the actual class name
-    algo = <YourAlgoName>(pop_size=10, n_objs=3, lb=-torch.zeros(12), ub=torch.ones(12))
+    algo = <YourAlgoName>(pop_size=100, n_objs=3, lb=-torch.zeros(12), ub=torch.ones(12))
     prob = DTLZ2(m=3)
     pf = prob.pf()
     workflow = StdWorkflow(algo, prob)
     workflow.init_step()
     jit_state_step = workflow.step
 
-    for i in range(10):
-        print(f"Gen {i}")
+    for i in range(30):
         jit_state_step()
-        fit = workflow.algorithm.fit
-        # Simple NaN filtering for metric calculation
-        fit = fit[~torch.any(torch.isnan(fit), dim=1)]
-        print(f"Generation {i + 1} IGD: {igd(fit, pf)}")
-```
+
+        if (i + 1) % 5 == 0:
+            fit = workflow.algorithm.fit
+            # Simple NaN filtering for metric calculation
+            fit = fit[~torch.any(torch.isnan(fit), dim=1)]
+            print(f"Gen {i + 1} IGD: {igd(fit, pf)}")
