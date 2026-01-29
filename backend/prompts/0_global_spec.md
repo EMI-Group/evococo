@@ -17,3 +17,8 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 ## 4. Forbidden Patterns
 * **NO** `numpy` (unless absolutely necessary). Use `torch`.
 * **NO** Python `for` loops for calculating distances or checking dominance. Use `torch` broadcasting.
+* **NO** Iterative Selection: Do not write logic like "put front 1, then front 2, then...".
+  * **Correct Pattern**:
+    1. Calculate metrics (Rank, Density) for the *entire* merged population.
+    2. Sort the entire population using `torch.argsort` or `evox.utils.lexsort` based on primary key (Rank) and secondary key (Density).
+    3. Slice the top N: `pop = sorted_pop[:N]`.
