@@ -5,7 +5,7 @@ Your goal is to select the precise subset of "Bug Patterns" and "Best Practices"
 
 ## Input Data
 
-### 1. Available Rules Library
+### 1. Available Rules Library (AUTHORITATIVE)
 {rules_context}
 
 ### 2. Analyst Report (Algorithm Logic)
@@ -26,24 +26,23 @@ You must evaluate every rule in the library against two criteria:
 * **Dominance/Sort**: If the report mentions "non-dominated sort", "dominance", "SDR", "Pareto rank", or "assigning fronts", select **Bug #7** AND **Bug #9**.
 * **Uniqueness**: If the report mentions "removing duplicates" or "unique", select **Bug #3**.
 
+## CRITICAL ID SELECTION RULES (MUST FOLLOW)
+
+1. **Closed Set**: You MUST select rule IDs ONLY from the "Available Rules Library".
+2. **Verbatim Copy**: Each selected item in `selected_rule_ids` MUST be copied **verbatim** from the exact text after `ID:` in the "Available Rules Library".
+   - Do NOT rewrite, paraphrase, rename, translate, shorten, or "correct" any ID.
+   - Preserve every character exactly (including spaces, punctuation, parentheses).
+3. **No Fabrication**: Do NOT output IDs that are not present in the library. If unsure, select fewer IDs but never invent.
+4. **Universal Inclusion**: Even if Criteria 2 matches nothing, you MUST still include all `always_apply: true` rules from the library.
+
 ## Output Format
 
-Return a **Strict JSON** object with a single key `selected_rule_ids`.
-* The list must contain the exact `id` strings from the Available Rules.
+Return a **Strict JSON** object with a single key `selected_bug_numbers`.
+* Each entry MUST be an integer bug number extracted from the `ID:` lines (e.g., Bug #3 -> 3).
 * Do not include any explanation or markdown formatting outside the JSON.
 
 ### Output Example
-```json
 {
-  "selected_rule_ids": [
-    "Bug #1 (Integer Sentinel)",
-    "Bug #2 (Ceil Semantics)",
-    "Bug #5 (Torch Cond)",
-    "Bug #6 (Crowding Distance)",
-    "Bug #7 (SDR Dominance Matrix)",
-    "Bug #8 (Mutable Semantics)",
-    "Bug #9 (Front Assignment Loop)",
-    "Bug #10 (MATLAB Dim Mapping)",
-    "Bug #11 (Forbidden Imports)"
-  ]
+  "selected_bug_numbers": [1,2,3,5,6,7,8,9,10,11]
 }
+

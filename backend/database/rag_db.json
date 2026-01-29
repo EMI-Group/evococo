@@ -62,7 +62,7 @@
       "description": "Premature break in front assignment loops (e.g., `if not mask.any(): break`) can cause infinite loops or logic errors.",
       "action": "must_not",
       "keywords": ["break", "while", "front", "mask", "loop", "non-dominated", "sort", "rank", "pareto", "ndsort"],
-      "always_apply": false,
+      "always_apply": true,
       "instruction": "Do NOT use break statements based on empty masks in front assignment loops. Trust the dominance logic."
     },
     {
