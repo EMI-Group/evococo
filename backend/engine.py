@@ -5,6 +5,7 @@ import os
 import datetime
 import uuid
 import time
+import re
 
 # 注意：这里导入了 _load_prompt，请确保 generator.py 里没有把 _load_prompt 设为私有
 from .generator import generate_llm_response
@@ -29,19 +30,40 @@ GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
 
 def load_rag_db():
     """从 JSON 文件加载 RAG 规则库"""
-    if os.path.exists(RULES_DB_PATH):
-        try:
-            with open(RULES_DB_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and "rules" in data:
-                    return data["rules"]
-                return data
-        except Exception as e:
-            print(f">>> [ERROR] Failed to load rag_db.json: {e}")
-            return []
-    else:
-        print(f">>> [WARN] Rules DB not found at {RULES_DB_PATH}")
+    print(f">>> [DEBUG] RULES_DB_PATH = {RULES_DB_PATH}")
+    print(f">>> [DEBUG] RULES_DB_PATH exists? {os.path.exists(RULES_DB_PATH)}")
+
+    if not os.path.exists(RULES_DB_PATH):
+        print(f">>> [ERROR] Rules DB not found at {RULES_DB_PATH}")
         return []
+
+    try:
+        size = os.path.getsize(RULES_DB_PATH)
+        print(f">>> [DEBUG] rag_db.json size = {size} bytes")
+
+        with open(RULES_DB_PATH, "r", encoding="utf-8") as f:
+            raw = f.read()
+
+        head = raw[:300]
+        print(f">>> [DEBUG] rag_db.json head(300) = {head!r}")
+
+        data = json.loads(raw)
+
+        if isinstance(data, dict) and "rules" in data and isinstance(data["rules"], list):
+            print(f">>> [DEBUG] rag_db.json parsed OK (dict with rules): {len(data['rules'])} rules")
+            return data["rules"]
+
+        if isinstance(data, list):
+            print(f">>> [DEBUG] rag_db.json parsed OK (list): {len(data)} rules")
+            return data
+
+        print(f">>> [ERROR] Unexpected rag_db.json format: type={type(data)}")
+        return []
+
+    except Exception as e:
+        print(f">>> [ERROR] Failed to load rag_db.json: {e}")
+        return []
+
 
 
 def load_global_spec():
@@ -195,16 +217,72 @@ async def run_pipeline(matlab_code: str, status_callback):
         )
 
         rag_json = extract_json(rag_str)
-        selected_ids = rag_json.get("selected_rule_ids", [])
+        selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
 
-        # 构建 matched_rules_text
-        matched_rules_list = []
+        print("rag_str:", rag_str[:500])
+        print("rag_json:", rag_json)
+        print("selected_bug_numbers:", selected_bug_numbers)
+        print(f">>> [DEBUG] rag_db size in Step2: {len(rag_db)}")
+
+        def _bug_no_from_id(s: str):
+            # 更宽松但仍要求出现 "Bug" 前缀，避免误匹配别的数字
+            m = re.search(r"\bbug\b\s*#\s*(\d+)", str(s), flags=re.I)
+            return int(m.group(1)) if m else None
+
+        # --- 诊断：看看 rag_db 里前几个 id 与解析结果 ---
+        preview = [
+            (r.get("id", ""), _bug_no_from_id(r.get("id", ""))) for r in rag_db[:15]
+        ]
+        print(">>> [DEBUG] rag_db id preview (id, parsed_no):", preview)
+
+        # 建立 bug_no -> rule 映射（以 rag_db 为权威）
+        no_to_rule = {}
         for r in rag_db:
-            if r["id"] in selected_ids:
-                instruction = r.get("instruction", r.get("description", ""))
-                matched_rules_list.append(f"[{r['id']}] {instruction}")
+            rid = r.get("id", "")
+            no = _bug_no_from_id(rid)
+            if no is not None and no not in no_to_rule:
+                no_to_rule[no] = r
+
+        print(
+            f">>> [DEBUG] no_to_rule size: {len(no_to_rule)}; keys: {sorted(list(no_to_rule.keys()))[:30]}"
+        )
+
+        # --- 如果映射为空，直接给出明确错误提示（避免默默 matched=0）---
+        if len(rag_db) == 0:
+            print(
+                ">>> [ERROR] rag_db is EMPTY. Check RULES_DB_PATH or rag_db.json loading."
+            )
+        if len(no_to_rule) == 0 and len(rag_db) > 0:
+            print(
+                ">>> [ERROR] Cannot parse any 'Bug #N' from rag_db rule IDs. Check id format in rag_db.json."
+            )
+
+        # 生成 matched_rules_text
+        matched_rules_list = []
+        seen_ids = set()
+
+        for no in selected_bug_numbers:
+            r = no_to_rule.get(no)
+            if r is None:
+                continue
+            rid = r.get("id", "")
+            if not rid or rid in seen_ids:
+                continue
+            instruction = r.get("instruction", r.get("description", ""))
+            matched_rules_list.append(f"[{rid}] {instruction}")
+            seen_ids.add(rid)
+
+        # 兜底：always_apply=true 强制注入（防 selector 漏选）
+        for r in rag_db:
+            if r.get("always_apply", False):
+                rid = r.get("id", "")
+                if rid and rid not in seen_ids:
+                    instruction = r.get("instruction", r.get("description", ""))
+                    matched_rules_list.append(f"[{rid}] {instruction}")
+                    seen_ids.add(rid)
 
         matched_rules_text = "\n".join(matched_rules_list)
+        print("matched_rules_count:", len(matched_rules_list))
 
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_json)
@@ -212,9 +290,9 @@ async def run_pipeline(matlab_code: str, status_callback):
         await status_callback(
             "step_done",
             "RAG Done",
-            f"Found {len(selected_ids)} Rules",
+            f"Found {len(selected_bug_numbers)} Rules",
             step_id="rag",
-            extra_data=selected_ids,
+            extra_data=selected_bug_numbers,
         )
 
         # =================================================
@@ -252,7 +330,8 @@ async def run_pipeline(matlab_code: str, status_callback):
             step_id="coder_draft",
             icon="fa-pen-nib",
         )
-
+        print(">>> [DEBUG] Step 4: Coder (Draft)")
+        print(matched_rules_text)
         constraints_str = matched_rules_text if matched_rules_text else "None"
 
         # 【核心修改】
