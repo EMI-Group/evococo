@@ -9,7 +9,8 @@ load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
 BASE_URL = os.getenv("OPENAI_BASE_URL")
 # 默认模型配置
-MODEL_NAME = os.getenv("OPENAI_MODEL", "gemini-2.0-flash-exp")
+MODEL_NAME = os.getenv("OPENAI_MODEL")
+# MODEL_NAME = os.getenv("OPENAI_MODEL", "gemini-2.0-flash-exp")
 TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
 
 # 3. Initialize OpenAI Async Client
