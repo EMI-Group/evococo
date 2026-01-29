@@ -111,7 +111,7 @@ if __name__ == "__main__":
     workflow.init_step()
     jit_state_step = workflow.step
 
-    for i in range(30):
+    for i in range(100):
         jit_state_step()
 
         if (i + 1) % 5 == 0:
