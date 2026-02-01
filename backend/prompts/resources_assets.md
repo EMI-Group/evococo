@@ -18,9 +18,14 @@ from evox.utils import (
 )
 
 # --- 2. Advanced Utilities (Extension: EvoMO) ---
-# MUST use this for uniqueness to ensure deterministic behavior
-# instead of torch.unique(dim=0)
-from evomo.utils import unique_rows_sorted 
+# MUST use this for uniqueness to ensure deterministic behavior.
+# [WARNING]: 
+# 1. Input 'x' MUST be 2D (N, D). If input is 1D, use .unsqueeze(1).
+# 2. Returns a tuple (unique_rows, indices) by default.
+# Usage Pattern:
+#   u_pop, u_idx = unique_rows_sorted(pop)
+#   u_fit = fit[u_idx]
+from evomo.utils import unique_rows_sorted
 
 # --- 3. Selection Operators (Unified) ---
 # Standard EvoX Selection
