@@ -39,11 +39,19 @@ def setup_workspace(session_id: str) -> str:
 
 
 def cleanup_workspace(session_id: str):
-    """清理工作目录"""
+    """
+    清理工作目录
+    【修改】现在改为保留文件以便调试
+    """
     workspace_path = os.path.join(BASE_WORKSPACE_DIR, session_id)
     if os.path.exists(workspace_path):
         try:
-            shutil.rmtree(workspace_path)
+            # -------------------------------------------------------
+            # [DEBUG MODE] 注释掉删除逻辑，保留所有中间文件
+            # -------------------------------------------------------
+            # shutil.rmtree(workspace_path)
+
+            print(f">>> [DEBUG] Workspace kept at: {workspace_path}")
         except Exception as e:
             print(f"Error cleaning up workspace {session_id}: {e}")
 
@@ -106,6 +114,7 @@ def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str
 def execute_code(code_str: str, session_id: str = None, filename="algo_script.py"):
     """
     基础执行函数：运行代码并返回输出
+    【修改】强制使用 CPU 运行以防止并行死机
     """
     if not session_id:
         session_id = f"exec_{str(uuid.uuid4())[:8]}"
@@ -119,12 +128,19 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
     except Exception as e:
         return False, "", f"System Error: Failed to write file - {str(e)}"
 
+    # === [关键修改] 强制 CPU 模式 ===
+    # env = os.environ.copy()
+    # env["CUDA_VISIBLE_DEVICES"] = ""  # 隐藏 GPU，PyTorch 回退到 CPU
+    # env["OMP_NUM_THREADS"] = "1"  # 限制 CPU 线程数，防止 100% 占用
+    # env["MKL_NUM_THREADS"] = "1"
+    # ==============================
+
     try:
         result = subprocess.run(
             [sys.executable, filename],
             capture_output=True,
             text=True,
-            timeout=30,  # 30秒超时，防止死循环
+            timeout=30,  # 30秒超时
             cwd=workspace,
         )
 
@@ -140,12 +156,8 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
 
 
 def parse_igd_from_stdout(stdout: str) -> list[float]:
-    """
-    从标准输出中提取 IGD 值
-    假设格式类似于: "Gen 10 IGD: 0.1234"
-    """
+    """从标准输出中提取 IGD 值"""
     igds = []
-    # 正则匹配浮点数，忽略 NaN
     matches = re.findall(r"IGD:\s*([+-]?([0-9]*[.])?[0-9]+|nan)", stdout, re.IGNORECASE)
     for m in matches:
         val_str = m[0]
@@ -163,27 +175,20 @@ def parse_igd_from_stdout(stdout: str) -> list[float]:
 def execute_code_trial(
     code_str: str, session_id: str, filename="algo_script.py"
 ) -> dict:
-    """
-    高级试跑函数：执行代码并分析收敛性指标
-    """
+    """高级试跑函数：执行代码并分析收敛性指标"""
     start_time = time.time()
     success, output, error = execute_code(code_str, session_id, filename)
     duration = time.time() - start_time
 
     igds = parse_igd_from_stdout(output)
-
-    # 检查是否有 NaN
     has_nan = "nan" in output.lower()
 
-    # 获取最后的 IGD 值
     last_igd = float("inf")
     if igds:
-        # 过滤掉 NaN 后的最后一个值
         valid_igds = [v for v in igds if not math.isnan(v)]
         if valid_igds:
             last_igd = valid_igds[-1]
 
-    # 简单的收敛性判断
     is_converging = False
     if len(igds) >= 2 and igds[-1] < igds[0]:
         is_converging = True
