@@ -9,7 +9,14 @@ import re
 
 # 注意：这里导入了 _load_prompt，请确保 generator.py 里没有把 _load_prompt 设为私有
 from .generator import generate_llm_response
-from .executor import execute_code, check_syntax_with_ruff
+
+# 【修改点】导入新的执行器函数 execute_code_trial 和 cleanup_workspace
+from .executor import (
+    execute_code,
+    execute_code_trial,
+    check_syntax_with_ruff,
+    cleanup_workspace,
+)
 
 # --- 路径配置 ---
 
@@ -24,46 +31,31 @@ RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
 # 全局规范路径
 GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
 
+# 【修改点】并行分支数量
+NUM_BRANCHES = 3
+
 
 # --- 数据加载辅助函数 ---
 
 
 def load_rag_db():
     """从 JSON 文件加载 RAG 规则库"""
-    print(f">>> [DEBUG] RULES_DB_PATH = {RULES_DB_PATH}")
-    print(f">>> [DEBUG] RULES_DB_PATH exists? {os.path.exists(RULES_DB_PATH)}")
-
     if not os.path.exists(RULES_DB_PATH):
         print(f">>> [ERROR] Rules DB not found at {RULES_DB_PATH}")
         return []
 
     try:
-        size = os.path.getsize(RULES_DB_PATH)
-        print(f">>> [DEBUG] rag_db.json size = {size} bytes")
-
         with open(RULES_DB_PATH, "r", encoding="utf-8") as f:
-            raw = f.read()
+            data = json.load(f)
 
-        head = raw[:300]
-        print(f">>> [DEBUG] rag_db.json head(300) = {head!r}")
-
-        data = json.loads(raw)
-
-        if isinstance(data, dict) and "rules" in data and isinstance(data["rules"], list):
-            print(f">>> [DEBUG] rag_db.json parsed OK (dict with rules): {len(data['rules'])} rules")
+        if isinstance(data, dict) and "rules" in data:
             return data["rules"]
-
         if isinstance(data, list):
-            print(f">>> [DEBUG] rag_db.json parsed OK (list): {len(data)} rules")
             return data
-
-        print(f">>> [ERROR] Unexpected rag_db.json format: type={type(data)}")
         return []
-
     except Exception as e:
         print(f">>> [ERROR] Failed to load rag_db.json: {e}")
         return []
-
 
 
 def load_global_spec():
@@ -74,7 +66,6 @@ def load_global_spec():
                 return f.read()
         except Exception as e:
             print(f">>> [ERROR] Failed to load 0_global_spec.md: {e}")
-            return "Error: Global Spec not found."
     return ""
 
 
@@ -112,7 +103,6 @@ def save_artifact(run_dir, filename, content):
                 f.write(json.dumps(content, indent=2, ensure_ascii=False))
             else:
                 f.write(str(content))
-        print(f">>> [SAVED] {filename}")
     except Exception as e:
         print(f">>> [SAVE ERROR] Failed to save {filename}: {e}")
 
@@ -134,7 +124,174 @@ def extract_json(text):
             return {}
 
 
-# --- 核心 Pipeline ---
+# --- 核心逻辑：单分支生命周期 ---
+
+
+async def run_single_branch_lifecycle(
+    branch_idx: int,
+    base_session_id: str,
+    matlab_code: str,
+    blueprint_md: str,
+    constraints_str: str,
+    asset_lib_content: str,
+    few_shot_content: str,
+    run_dir: str,
+    status_callback,
+):
+    """
+    独立运行一个代码生成分支：Coder -> Static Fix -> Runtime Fix
+    """
+    branch_id = f"br{branch_idx}"
+    # 【隔离关键】使用独立的 Session ID，防止文件冲突
+    session_id = f"{base_session_id}_{branch_id}"
+
+    # 增加一点 temperature 的扰动，保证多样性
+    temp_offset = 0.05 * branch_idx
+
+    log_prefix = f"[Branch {branch_idx}]"
+    print(f">>> {log_prefix} Started flow...")
+
+    current_code = ""
+
+    try:
+        # =================================================
+        # STEP 4: CODER (Draft)
+        # =================================================
+        # 这里的 status_callback 如果频繁调用可能会导致 UI 混乱，
+        # 所以在分支内部我们主要依靠 print log，或者发送不带 step_id 的 log
+
+        current_code = await generate_llm_response(
+            "4_coder.md",
+            constraints=constraints_str,
+            blueprint_plan=blueprint_md,
+            asset_library=asset_lib_content,
+            few_shot_examples=few_shot_content,
+            temperature=0.7 + temp_offset,
+        )
+        current_code = current_code.replace("```python", "").replace("```", "").strip()
+
+        if run_dir:
+            save_artifact(run_dir, f"4_code_draft_{branch_id}.py", current_code)
+
+        # =================================================
+        # STEP 5: STATIC FIXER (Ruff Analysis)
+        # =================================================
+        MAX_STATIC_RETRIES = 2
+        for i in range(MAX_STATIC_RETRIES + 1):
+            is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
+
+            # 如果 Ruff 没装或者报错
+            if "not found" in error_msg and "ruff" in error_msg:
+                print(f">>> {log_prefix} Ruff not found, skipping static check.")
+                break
+
+            if is_valid:
+                break
+
+            if i < MAX_STATIC_RETRIES:
+                print(f">>> {log_prefix} Static Fix {i + 1}...")
+                current_code = await generate_llm_response(
+                    "5_static_fixer.md", error_log=error_msg, previous_code=current_code
+                )
+                current_code = (
+                    current_code.replace("```python", "").replace("```", "").strip()
+                )
+            else:
+                print(f">>> {log_prefix} Static Check Failed, proceeding anyway.")
+
+        if run_dir:
+            save_artifact(run_dir, f"5_code_static_final_{branch_id}.py", current_code)
+
+        # =================================================
+        # STEP 6: RUNTIME FIXER (The Tournament Trial)
+        # =================================================
+        MAX_RUNTIME_RETRIES = 2  # 赛马阶段不需要修太多次
+        best_igd_in_branch = float("inf")
+        best_history = []
+
+        for attempt in range(MAX_RUNTIME_RETRIES + 1):
+            print(f">>> {log_prefix} Runtime Attempt {attempt + 1}...")
+
+            # 使用 execute_code_trial 获取详细指标 (IGD, History, NaN)
+            report = execute_code_trial(current_code, session_id)
+
+            # 保存现场
+            if run_dir:
+                save_artifact(
+                    run_dir, f"6_code_exec_{branch_id}_try{attempt}.py", current_code
+                )
+                save_artifact(
+                    run_dir,
+                    f"6_log_{branch_id}_try{attempt}.txt",
+                    f"IGD: {report['last_igd']}\nErr: {report['stderr']}\nOut: {report['stdout'][:500]}",
+                )
+
+            if report["success"]:
+                # 运行成功
+                if not report["has_nan"]:
+                    # 完美运行 (无报错，无 NaN)
+                    best_igd_in_branch = report["last_igd"]
+                    best_history = report["igd_history"]
+                    print(f">>> {log_prefix} Success! IGD={best_igd_in_branch}")
+
+                    # 清理并返回成功结果
+                    cleanup_workspace(session_id)
+                    return {
+                        "success": True,
+                        "code": current_code,
+                        "igd": best_igd_in_branch,
+                        "igd_history": best_history,
+                        "branch_idx": branch_idx,
+                    }
+                else:
+                    print(f">>> {log_prefix} Success but NaN detected.")
+
+            # 运行失败或有 NaN，尝试修复
+            if attempt < MAX_RUNTIME_RETRIES:
+                err_summary = report["stderr"]
+                if report["has_nan"]:
+                    err_summary = "Runtime Warning: NaN values detected in output metrics. Check division by zero or normalization."
+                elif not report["success"] and not err_summary:
+                    err_summary = f"Runtime Error: Execution failed. output: {report['stdout'][-200:]}"
+
+                current_code = await generate_llm_response(
+                    "6_runtime_fixer.md",
+                    constraints=constraints_str,
+                    blueprint_plan=blueprint_md,
+                    error_summary=err_summary,
+                    previous_code=current_code,
+                    matlab_code=matlab_code,
+                )
+                current_code = (
+                    current_code.replace("```python", "").replace("```", "").strip()
+                )
+            else:
+                print(f">>> {log_prefix} Failed after max retries.")
+
+        # 最终失败
+        cleanup_workspace(session_id)
+        return {
+            "success": False,
+            "code": current_code,
+            "igd": float("inf"),
+            "igd_history": [],
+            "branch_idx": branch_idx,
+        }
+
+    except Exception as e:
+        print(f">>> {log_prefix} Crashed: {e}")
+        traceback.print_exc()
+        cleanup_workspace(session_id)
+        return {
+            "success": False,
+            "code": current_code,
+            "igd": float("inf"),
+            "igd_history": [],
+            "branch_idx": branch_idx,
+        }
+
+
+# --- 主流程 Pipeline ---
 
 
 async def run_pipeline(matlab_code: str, status_callback):
@@ -207,7 +364,9 @@ async def run_pipeline(matlab_code: str, status_callback):
             tag = "[UNIVERSAL]" if r.get("always_apply") else "[CONDITIONAL]"
             desc = r.get("description", "No description")
             keywords = ", ".join(r.get("keywords", []))
-            rule_entry = f"ID: {r['id']}\nType: {tag}\nDesc: {desc}\nKeywords: {keywords}"
+            rule_entry = (
+                f"ID: {r['id']}\nType: {tag}\nDesc: {desc}\nKeywords: {keywords}"
+            )
             rules_context_list.append(rule_entry)
 
         all_rules_desc = "\n---\n".join(rules_context_list)
@@ -219,60 +378,31 @@ async def run_pipeline(matlab_code: str, status_callback):
         rag_json = extract_json(rag_str)
         selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
 
-        print("rag_str:", rag_str[:500])
-        print("rag_json:", rag_json)
-        print("selected_bug_numbers:", selected_bug_numbers)
-        print(f">>> [DEBUG] rag_db size in Step2: {len(rag_db)}")
-
+        # 匹配规则逻辑
         def _bug_no_from_id(s: str):
-            # 更宽松但仍要求出现 "Bug" 前缀，避免误匹配别的数字
             m = re.search(r"\bbug\b\s*#\s*(\d+)", str(s), flags=re.I)
             return int(m.group(1)) if m else None
 
-        # --- 诊断：看看 rag_db 里前几个 id 与解析结果 ---
-        preview = [
-            (r.get("id", ""), _bug_no_from_id(r.get("id", ""))) for r in rag_db[:15]
-        ]
-        print(">>> [DEBUG] rag_db id preview (id, parsed_no):", preview)
-
-        # 建立 bug_no -> rule 映射（以 rag_db 为权威）
         no_to_rule = {}
         for r in rag_db:
-            rid = r.get("id", "")
-            no = _bug_no_from_id(rid)
-            if no is not None and no not in no_to_rule:
+            no = _bug_no_from_id(r.get("id", ""))
+            if no is not None:
                 no_to_rule[no] = r
 
-        print(
-            f">>> [DEBUG] no_to_rule size: {len(no_to_rule)}; keys: {sorted(list(no_to_rule.keys()))[:30]}"
-        )
-
-        # --- 如果映射为空，直接给出明确错误提示（避免默默 matched=0）---
-        if len(rag_db) == 0:
-            print(
-                ">>> [ERROR] rag_db is EMPTY. Check RULES_DB_PATH or rag_db.json loading."
-            )
-        if len(no_to_rule) == 0 and len(rag_db) > 0:
-            print(
-                ">>> [ERROR] Cannot parse any 'Bug #N' from rag_db rule IDs. Check id format in rag_db.json."
-            )
-
-        # 生成 matched_rules_text
         matched_rules_list = []
         seen_ids = set()
 
+        # 添加被选中的规则
         for no in selected_bug_numbers:
             r = no_to_rule.get(no)
-            if r is None:
-                continue
-            rid = r.get("id", "")
-            if not rid or rid in seen_ids:
-                continue
-            instruction = r.get("instruction", r.get("description", ""))
-            matched_rules_list.append(f"[{rid}] {instruction}")
-            seen_ids.add(rid)
+            if r:
+                rid = r.get("id", "")
+                if rid and rid not in seen_ids:
+                    instruction = r.get("instruction", r.get("description", ""))
+                    matched_rules_list.append(f"[{rid}] {instruction}")
+                    seen_ids.add(rid)
 
-        # 兜底：always_apply=true 强制注入（防 selector 漏选）
+        # 添加通用规则
         for r in rag_db:
             if r.get("always_apply", False):
                 rid = r.get("id", "")
@@ -282,8 +412,6 @@ async def run_pipeline(matlab_code: str, status_callback):
                     seen_ids.add(rid)
 
         matched_rules_text = "\n".join(matched_rules_list)
-        print("matched_rules_count:", len(matched_rules_list))
-
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_json)
 
@@ -320,286 +448,125 @@ async def run_pipeline(matlab_code: str, status_callback):
         )
 
         # =================================================
-        # STEP 4: CODER (Initial Generation)
+        # STEP 4-6: THE TOURNAMENT (Parallel Execution)
         # =================================================
-        print(">>> [DEBUG] Step 4: Coder (Draft)")
+        print(f">>> [DEBUG] Starting {NUM_BRANCHES} parallel branches...")
         await status_callback(
             "step_start",
-            "Step 4: Coder",
-            "Drafting Initial Code...",
-            step_id="coder_draft",
-            icon="fa-pen-nib",
-        )
-        print(">>> [DEBUG] Step 4: Coder (Draft)")
-        print(matched_rules_text)
-        constraints_str = matched_rules_text if matched_rules_text else "None"
-
-        # 【核心修改】
-        # 1. 移除了 execution_mode 和 error_summary (因为 prompt v3.1 删除了这两个占位符)
-        # 2. 注入了 asset_library and few_shot_examples
-        current_code = await generate_llm_response(
-            "4_coder.md",
-            constraints=constraints_str,
-            blueprint_plan=blueprint_md,
-            asset_library=asset_lib_content,    # <--- SDK
-            few_shot_examples=few_shot_content, # <--- 范例
-        )
-        current_code = current_code.replace("```python", "").replace("```", "").strip()
-
-        if run_dir:
-            save_artifact(run_dir, "4_code_draft.py", current_code)
-
-        await status_callback("result_code", "", current_code)
-        await status_callback(
-            "step_done", "Coder Done", "Draft Generated", step_id="coder_draft"
+            "Step 4-6: Tournament",
+            f"Racing {NUM_BRANCHES} candidates in parallel...",
+            step_id="tournament",
+            icon="fa-flag-checkered",
         )
 
-        # =================================================
-        # STEP 5: STATIC FIXER (Ruff Analysis)
-        # =================================================
-        print(">>> [DEBUG] Step 5: Static Analysis")
-        MAX_STATIC_RETRIES = 3
-        static_pass = False
-
-        for i in range(MAX_STATIC_RETRIES + 1):
-            check_id = f"static_{i}"
-            current_time = datetime.datetime.now().strftime("%H:%M:%S")
-            await status_callback(
-                "step_start",
-                f"Step 5: Static Check ({i + 1})",
-                f"Running Ruff [{current_time}]...",
-                step_id=check_id,
-                icon="fa-microscope",
+        tasks = []
+        for i in range(NUM_BRANCHES):
+            tasks.append(
+                run_single_branch_lifecycle(
+                    i,
+                    session_id,
+                    matlab_code,
+                    blueprint_md,
+                    matched_rules_text,
+                    asset_lib_content,
+                    few_shot_content,
+                    run_dir,
+                    status_callback,
+                )
             )
 
-            # --- [计时开始] Ruff ---
-            t_start = time.time()
-            is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
-            t_end = time.time()
-
-            duration_msg = f"Ruff Check ({i + 1}) took: {t_end - t_start:.4f}s"
-            print(f">>> [PERF] {duration_msg}")
-            await status_callback("log", "PERF", duration_msg)
-            # --- [计时结束] ---
-
-            # 【防御性跳过】
-            if "not found" in error_msg and "ruff" in error_msg:
-                print(">>> [WARN] Ruff tool not found. Skipping static check.")
-                await status_callback(
-                    "log", "WARN", "⚠️ Ruff tool not found. Skipping static check."
-                )
-                await status_callback(
-                    "step_done",
-                    "Skipped",
-                    "Ruff Missing",
-                    step_id=check_id,
-                    is_success=True,
-                )
-                static_pass = True
-                break
-
-            if is_valid:
-                static_pass = True
-                await status_callback("log", "SYSTEM", "Ruff Check Passed ✅")
-                await status_callback(
-                    "step_done",
-                    "Static Pass",
-                    "Code Valid",
-                    step_id=check_id,
-                    is_success=True,
-                )
-                break
-
-            # 如果检测失败
-            if i < MAX_STATIC_RETRIES:
-                if run_dir:
-                    save_artifact(run_dir, f"5_ruff_error_{i + 1}.txt", error_msg)
-
-                short_err = (
-                    error_msg[:300].replace("\n", " ") + "..."
-                    if len(error_msg) > 300
-                    else error_msg.replace("\n", " ")
-                )
-                await status_callback("log", "RUFF_ERR", short_err)
-
-                await status_callback(
-                    "step_done",
-                    "Static Issues",
-                    "Fixing...",
-                    step_id=check_id,
-                    is_success=False,
-                )
-
-                fix_id = f"static_fix_{i}"
-                await status_callback(
-                    "step_start",
-                    f"Step 5: Static Fix ({i + 1})",
-                    "Applying Fixes...",
-                    step_id=fix_id,
-                    icon="fa-wrench",
-                )
-
-                # --- [计时开始] LLM Fix ---
-                t_llm_start = time.time()
-                current_code = await generate_llm_response(
-                    "5_static_fixer.md", error_log=error_msg, previous_code=current_code
-                )
-                t_llm_end = time.time()
-
-                llm_msg = (
-                    f"LLM Static Fix ({i + 1}) took: {t_llm_end - t_llm_start:.4f}s"
-                )
-                print(f">>> [PERF] {llm_msg}")
-                await status_callback("log", "PERF", llm_msg)
-                # --- [计时结束] ---
-
-                current_code = (
-                    current_code.replace("```python", "").replace("```", "").strip()
-                )
-
-                if run_dir:
-                    save_artifact(
-                        run_dir, f"5_code_static_fix_{i + 1}.py", current_code
-                    )
-                await status_callback("result_code", "", current_code)
-                await status_callback(
-                    "step_done", "Fixed", "New Version", step_id=fix_id
-                )
-            else:
-                # 最后一次尝试失败
-                if run_dir:
-                    save_artifact(run_dir, f"5_ruff_error_FINAL.txt", error_msg)
-
-                short_err = error_msg[:300].replace("\n", " ") + "..."
-                await status_callback("log", "RUFF_FAIL", short_err)
-
-                await status_callback(
-                    "log",
-                    "WARN",
-                    "Static check failed multiple times. Proceeding to Runtime anyway.",
-                )
-
-                await status_callback(
-                    "step_done",
-                    "Check Failed",
-                    "Force Run",
-                    step_id=check_id,
-                    is_success=False,
-                )
-
-                static_pass = True
-                break
+        # 并发等待所有分支运行完成
+        results = await asyncio.gather(*tasks)
+        # results format: [{"success": T/F, "code": "...", "igd": 0.1, "branch_idx": 0, "igd_history": [...]}, ...]
 
         # =================================================
-        # STEP 6: RUNTIME VERIFIER (Execution & Repair)
+        # STEP 7: SELECTOR (LLM Judge)
         # =================================================
-        if static_pass:
-            print(">>> [DEBUG] Step 6: Runtime Verification")
-            MAX_RUNTIME_RETRIES = 3
+        await status_callback(
+            "step_start",
+            "Step 7: Judge",
+            "Selecting Best Implementation...",
+            step_id="selector",
+            icon="fa-gavel",
+        )
 
-            for attempt in range(1, MAX_RUNTIME_RETRIES + 2):
-                exec_id = f"runtime_{attempt}"
+        # 1. 整理候选人数据
+        candidates_data = []
+        valid_candidates_exist = False
 
-                await status_callback(
-                    "step_start",
-                    f"Step 6: Execute ({attempt})",
-                    "Running in Sandbox...",
-                    step_id=exec_id,
-                    icon="fa-play",
+        for res in results:
+            if res["success"]:
+                valid_candidates_exist = True
+            candidates_data.append(
+                {
+                    "branch_id": res["branch_idx"],
+                    "success": res["success"],
+                    "final_igd": res["igd"],
+                    "igd_history": res["igd_history"],
+                    "code_snippet": res["code"],  # LLM 需要代码来判断张量化程度
+                }
+            )
+
+        # 保存候选列表供调试
+        if run_dir:
+            save_artifact(run_dir, "7_candidates_raw.json", candidates_data)
+
+        candidates_json = json.dumps(candidates_data, indent=2)
+        final_code = ""
+
+        # 2. 调用 LLM 裁判 (除非全军覆没)
+        if not valid_candidates_exist:
+            print(">>> All branches failed. Picking the first one for debug.")
+            final_code = results[0]["code"]
+            await status_callback(
+                "step_done",
+                "Tournament Failed",
+                "No valid candidates.",
+                step_id="selector",
+                is_success=False,
+            )
+        else:
+            try:
+                print(">>> Asking Judge LLM to select best code...")
+                selected_code = await generate_llm_response(
+                    "7_selector.md", candidates_list=candidates_json
                 )
 
-                print(f">>> [DEBUG] Executing code (Length: {len(current_code)})")
-
-                # --- 运行时计时 ---
-                t_exec_start = time.time()
-                success, output, error = execute_code(current_code, session_id)
-                t_exec_end = time.time()
-
-                exec_msg = (
-                    f"Runtime Exec ({attempt}) took: {t_exec_end - t_exec_start:.4f}s"
+                # 清理
+                final_code = (
+                    selected_code.replace("```python", "").replace("```", "").strip()
                 )
-                print(f">>> [PERF] {exec_msg}")
-                await status_callback("log", "PERF", exec_msg)
-                # ----------------
 
                 if run_dir:
-                    save_artifact(
-                        run_dir,
-                        f"6_exec_log_{attempt}.txt",
-                        f"STDOUT:\n{output}\nSTDERR:\n{error}",
-                    )
+                    save_artifact(run_dir, "7_judge_response.md", selected_code)
 
-                if success:
-                    await status_callback(
-                        "step_done",
-                        "Success",
-                        "Pipeline Complete!",
-                        step_id=exec_id,
-                        is_success=True,
-                    )
-                    await status_callback("log", "STDOUT", output)
-                    return
+                await status_callback(
+                    "step_done",
+                    "Selector Done",
+                    "Winner Selected",
+                    step_id="selector",
+                    is_success=True,
+                )
 
-                # 如果失败且有重试次数，则修复
-                if attempt <= MAX_RUNTIME_RETRIES:
-                    await status_callback(
-                        "step_done",
-                        "Runtime Error",
-                        "Repairing...",
-                        step_id=exec_id,
-                        is_success=False,
-                    )
-                    await status_callback("log", "STDERR", error)
+            except Exception as e:
+                print(f">>> Judge Failed: {e}. Fallback to Greedy.")
+                # 兜底：选 IGD 最小的
+                best_res = min(
+                    [r for r in results if r["success"]],
+                    key=lambda x: x["igd"],
+                    default=results[0],
+                )
+                final_code = best_res["code"]
 
-                    repair_id = f"runtime_fix_{attempt}"
-                    await status_callback(
-                        "step_start",
-                        f"Step 6: Repair ({attempt})",
-                        "Logic Repair...",
-                        step_id=repair_id,
-                        icon="fa-heart-pulse",
-                    )
+        # =================================================
+        # FINISH
+        # =================================================
+        await status_callback("result_code", "Final Optimized Code", final_code)
 
-                    # --- [计时开始] LLM Runtime Fix ---
-                    t_fix_start = time.time()
+        if run_dir:
+            save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)
 
-                    # 传入 matlab_code 作为参考
-                    current_code = await generate_llm_response(
-                        "6_runtime_fixer.md",
-                        constraints=constraints_str,
-                        blueprint_plan=blueprint_md,
-                        error_summary=f"Runtime Error:\n{error}",
-                        previous_code=current_code,
-                        matlab_code=matlab_code,
-                    )
-                    t_fix_end = time.time()
-
-                    rt_fix_msg = f"LLM Runtime Fix ({attempt}) took: {t_fix_end - t_fix_start:.4f}s"
-                    print(f">>> [PERF] {rt_fix_msg}")
-                    await status_callback("log", "PERF", rt_fix_msg)
-                    # ---------------------------------
-
-                    current_code = (
-                        current_code.replace("```python", "").replace("```", "").strip()
-                    )
-
-                    if run_dir:
-                        save_artifact(
-                            run_dir, f"6_code_runtime_fix_{attempt}.py", current_code
-                        )
-                    await status_callback("result_code", "", current_code)
-                    await status_callback(
-                        "step_done", "Repaired", "Ready to Retry", step_id=repair_id
-                    )
-                else:
-                    await status_callback(
-                        "step_done",
-                        "Failed",
-                        "Max Retries Reached",
-                        step_id=exec_id,
-                        is_success=False,
-                    )
-                    return
+        await status_callback("step_done", "Success", "Pipeline Complete!", step_id="finish", is_success=True)
 
     except Exception as e:
         print(">>> [ERROR] Pipeline Crashed:")
