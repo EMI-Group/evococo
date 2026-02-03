@@ -106,7 +106,7 @@ if __name__ == "__main__":
     from evox.problems.numerical import DTLZ2
     from evox.workflows import StdWorkflow
 
-    torch.set_default_device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.set_default_device("cpu")
 
     # <YourAlgoName> must be replaced by your actual class name
     algo = <YourAlgoName>(pop_size=100, n_objs=3, lb=-torch.zeros(12), ub=torch.ones(12))
