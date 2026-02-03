@@ -7,10 +7,7 @@ import uuid
 import time
 import re
 
-# 注意：这里导入了 _load_prompt，请确保 generator.py 里没有把 _load_prompt 设为私有
 from .generator import generate_llm_response
-
-# 【修改点】导入新的执行器函数 execute_code_trial 和 cleanup_workspace
 from .executor import (
     execute_code,
     execute_code_trial,
@@ -31,7 +28,7 @@ RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
 # 全局规范路径
 GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
 
-# 【修改点】并行分支数量
+# 并行分支数量
 NUM_BRANCHES = 3
 
 
@@ -142,7 +139,6 @@ async def run_single_branch_lifecycle(
     独立运行一个代码生成分支：Coder -> Static Fix -> Runtime Fix
     """
     branch_id = f"br{branch_idx}"
-    # 【隔离关键】使用独立的 Session ID，防止文件冲突
     session_id = f"{base_session_id}_{branch_id}"
 
     # 增加一点 temperature 的扰动，保证多样性
@@ -157,9 +153,6 @@ async def run_single_branch_lifecycle(
         # =================================================
         # STEP 4: CODER (Draft)
         # =================================================
-        # 这里的 status_callback 如果频繁调用可能会导致 UI 混乱，
-        # 所以在分支内部我们主要依靠 print log，或者发送不带 step_id 的 log
-
         current_code = await generate_llm_response(
             "4_coder.md",
             constraints=constraints_str,
@@ -180,7 +173,6 @@ async def run_single_branch_lifecycle(
         for i in range(MAX_STATIC_RETRIES + 1):
             is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
 
-            # 如果 Ruff 没装或者报错
             if "not found" in error_msg and "ruff" in error_msg:
                 print(f">>> {log_prefix} Ruff not found, skipping static check.")
                 break
@@ -205,17 +197,17 @@ async def run_single_branch_lifecycle(
         # =================================================
         # STEP 6: RUNTIME FIXER (The Tournament Trial)
         # =================================================
-        MAX_RUNTIME_RETRIES = 2  # 赛马阶段不需要修太多次
+        MAX_RUNTIME_RETRIES = 2
         best_igd_in_branch = float("inf")
         best_history = []
 
+        # 全并行模式（无锁）
         for attempt in range(MAX_RUNTIME_RETRIES + 1):
             print(f">>> {log_prefix} Runtime Attempt {attempt + 1}...")
 
-            # 使用 execute_code_trial 获取详细指标 (IGD, History, NaN)
+            # 使用 execute_code_trial 获取详细指标
             report = execute_code_trial(current_code, session_id)
 
-            # 保存现场
             if run_dir:
                 save_artifact(
                     run_dir, f"6_code_exec_{branch_id}_try{attempt}.py", current_code
@@ -227,14 +219,11 @@ async def run_single_branch_lifecycle(
                 )
 
             if report["success"]:
-                # 运行成功
                 if not report["has_nan"]:
-                    # 完美运行 (无报错，无 NaN)
                     best_igd_in_branch = report["last_igd"]
                     best_history = report["igd_history"]
                     print(f">>> {log_prefix} Success! IGD={best_igd_in_branch}")
 
-                    # 清理并返回成功结果
                     cleanup_workspace(session_id)
                     return {
                         "success": True,
@@ -246,11 +235,12 @@ async def run_single_branch_lifecycle(
                 else:
                     print(f">>> {log_prefix} Success but NaN detected.")
 
-            # 运行失败或有 NaN，尝试修复
             if attempt < MAX_RUNTIME_RETRIES:
                 err_summary = report["stderr"]
                 if report["has_nan"]:
-                    err_summary = "Runtime Warning: NaN values detected in output metrics. Check division by zero or normalization."
+                    err_summary = (
+                        "Runtime Warning: NaN values detected. Check division by zero."
+                    )
                 elif not report["success"] and not err_summary:
                     err_summary = f"Runtime Error: Execution failed. output: {report['stdout'][-200:]}"
 
@@ -300,7 +290,6 @@ async def run_pipeline(matlab_code: str, status_callback):
     # 0. 加载外部数据
     rag_db = load_rag_db()
     global_spec_content = load_global_spec()
-    # 加载 Prompt 资源
     asset_lib_content = load_resource("resources_assets.md")
     few_shot_content = load_resource("resources_examples.md")
 
@@ -342,8 +331,13 @@ async def run_pipeline(matlab_code: str, status_callback):
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
 
         await status_callback("result_ir", "", ir_md)
+        # 【修改点】 显式添加 is_success=True
         await status_callback(
-            "step_done", "Analyst Done", "Report Generated", step_id="analyst"
+            "step_done",
+            "Analyst Done",
+            "Report Generated",
+            step_id="analyst",
+            is_success=True,
         )
 
         # =================================================
@@ -358,7 +352,6 @@ async def run_pipeline(matlab_code: str, status_callback):
             icon="fa-book-open",
         )
 
-        # 构建 RAG Context
         rules_context_list = []
         for r in rag_db:
             tag = "[UNIVERSAL]" if r.get("always_apply") else "[CONDITIONAL]"
@@ -378,7 +371,6 @@ async def run_pipeline(matlab_code: str, status_callback):
         rag_json = extract_json(rag_str)
         selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
 
-        # 匹配规则逻辑
         def _bug_no_from_id(s: str):
             m = re.search(r"\bbug\b\s*#\s*(\d+)", str(s), flags=re.I)
             return int(m.group(1)) if m else None
@@ -392,7 +384,6 @@ async def run_pipeline(matlab_code: str, status_callback):
         matched_rules_list = []
         seen_ids = set()
 
-        # 添加被选中的规则
         for no in selected_bug_numbers:
             r = no_to_rule.get(no)
             if r:
@@ -402,7 +393,6 @@ async def run_pipeline(matlab_code: str, status_callback):
                     matched_rules_list.append(f"[{rid}] {instruction}")
                     seen_ids.add(rid)
 
-        # 添加通用规则
         for r in rag_db:
             if r.get("always_apply", False):
                 rid = r.get("id", "")
@@ -415,12 +405,14 @@ async def run_pipeline(matlab_code: str, status_callback):
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_json)
 
+        # 【修改点】 显式添加 is_success=True
         await status_callback(
             "step_done",
             "RAG Done",
             f"Found {len(selected_bug_numbers)} Rules",
             step_id="rag",
             extra_data=selected_bug_numbers,
+            is_success=True,
         )
 
         # =================================================
@@ -443,8 +435,13 @@ async def run_pipeline(matlab_code: str, status_callback):
             save_artifact(run_dir, "3_blueprint.md", blueprint_md)
 
         await status_callback("result_blueprint", "", blueprint_md)
+        # 【修改点】 显式添加 is_success=True
         await status_callback(
-            "step_done", "Architect Done", "Blueprint Ready", step_id="architect"
+            "step_done",
+            "Architect Done",
+            "Blueprint Ready",
+            step_id="architect",
+            is_success=True,
         )
 
         # =================================================
@@ -475,9 +472,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                 )
             )
 
-        # 并发等待所有分支运行完成
         results = await asyncio.gather(*tasks)
-        # results format: [{"success": T/F, "code": "...", "igd": 0.1, "branch_idx": 0, "igd_history": [...]}, ...]
 
         # =================================================
         # STEP 7: SELECTOR (LLM Judge)
@@ -490,7 +485,6 @@ async def run_pipeline(matlab_code: str, status_callback):
             icon="fa-gavel",
         )
 
-        # 1. 整理候选人数据
         candidates_data = []
         valid_candidates_exist = False
 
@@ -503,18 +497,16 @@ async def run_pipeline(matlab_code: str, status_callback):
                     "success": res["success"],
                     "final_igd": res["igd"],
                     "igd_history": res["igd_history"],
-                    "code_snippet": res["code"],  # LLM 需要代码来判断张量化程度
+                    "code_snippet": res["code"],
                 }
             )
 
-        # 保存候选列表供调试
         if run_dir:
             save_artifact(run_dir, "7_candidates_raw.json", candidates_data)
 
         candidates_json = json.dumps(candidates_data, indent=2)
         final_code = ""
 
-        # 2. 调用 LLM 裁判 (除非全军覆没)
         if not valid_candidates_exist:
             print(">>> All branches failed. Picking the first one for debug.")
             final_code = results[0]["code"]
@@ -528,11 +520,11 @@ async def run_pipeline(matlab_code: str, status_callback):
         else:
             try:
                 print(">>> Asking Judge LLM to select best code...")
+
                 selected_code = await generate_llm_response(
                     "7_selector.md", candidates_list=candidates_json
                 )
 
-                # 清理
                 final_code = (
                     selected_code.replace("```python", "").replace("```", "").strip()
                 )
@@ -550,7 +542,6 @@ async def run_pipeline(matlab_code: str, status_callback):
 
             except Exception as e:
                 print(f">>> Judge Failed: {e}. Fallback to Greedy.")
-                # 兜底：选 IGD 最小的
                 best_res = min(
                     [r for r in results if r["success"]],
                     key=lambda x: x["igd"],
