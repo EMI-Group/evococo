@@ -1,5 +1,5 @@
 {
-  "version": "1.3",
+  "version": "1.4",
   "rules": [
     {
       "id": "Bug #1 (Integer Sentinel)",
@@ -58,12 +58,12 @@
       "instruction": "Treat Mutable objects directly as tensors. Never access `.value` attribute."
     },
     {
-      "id": "Bug #9 (Front Assignment Loop)",
-      "description": "Premature break in front assignment loops (e.g., `if not mask.any(): break`) can cause infinite loops or logic errors.",
-      "action": "must_not",
-      "keywords": ["break", "while", "front", "mask", "loop", "non-dominated", "sort", "rank", "pareto", "ndsort"],
+      "id": "Bug #9 (Efficient Peeling)",
+      "description": "For iterative front sorting, use a deadlock breaker and calculate metrics inside the loop.",
+      "action": "must",
+      "keywords": ["nsga", "dominance", "front", "sort", "peeling", "deadlock"],
       "always_apply": true,
-      "instruction": "Do NOT use break statements based on empty masks in front assignment loops. Trust the dominance logic."
+      "instruction": "1. Deadlock Breaker: if `num_in_front==0`, force select all remaining individuals (do NOT break). 2. EFFICIENCY: Calculate row-dependent metrics (like Crowding Distance) INSIDE the while loop immediately. Do NOT iterate fronts again in a second loop."
     },
     {
       "id": "Bug #10 (MATLAB Dim Mapping)",
@@ -107,11 +107,11 @@
     },
     {
       "id": "Bug #17 (SDR Logic Fidelity)",
-      "description": "SDR algorithm has specific non-standard math that must be preserved to prevent infinite loops and non-convergence.",
+      "description": "SDR algorithm has specific non-standard math that must be preserved.",
       "action": "must",
-      "keywords": ["sdr", "angle", "theta", "dominance", "nsga-ii/sdr", "deadlock"],
+      "keywords": ["sdr", "angle", "theta", "dominance", "nsga-ii/sdr"],
       "always_apply": false,
-      "instruction": "1. Accumulate `zmin` historically. 2. Round data before `unique`. 3. Angle(eye)=Pi/2 (Cosine=0). 4. Use `unique` on min_angles before finding median. 5. CRITICAL: `Theta` must be clamped >= 1.0 (`max(1, ...)`). 6. In front peeling loop, add a safety check: if `num_in_front == 0`, treat all remaining individuals as the current front to break deadlocks."
+      "instruction": "1. Accumulate `zmin` historically. 2. Round data before `unique`. 3. Angle(eye)=Pi/2 (Cosine=0). 4. Use `unique` on min_angles before finding median. 5. CRITICAL: `Theta` must be clamped >= 1.0 (`max(1, ...)`)."
     },
     {
       "id": "Bug #18 (Normalization Trigger)",
@@ -120,6 +120,14 @@
       "keywords": ["normalization", "range", "zmin", "zmax"],
       "always_apply": false,
       "instruction": "Check the global condition `0.05*max(range) < min(range)` first. If True, divide ALL objs by range. If False, divide NONE. Do NOT use dimension-wise `torch.where`."
+    },
+    {
+      "id": "Bug #19 (Decomposition Logic)",
+      "description": "Decomposition algorithms (MOEA/D, RVEA) require specific weight/scalarization setup.",
+      "action": "must",
+      "keywords": ["moea/d", "decomposition", "weight", "tchebycheff", "pbi"],
+      "always_apply": false,
+      "instruction": "1. Init weights with `uniform_sampling`. 2. Use broadcasting (N, 1, M) - (1, N, M) for distance matrices. 3. Implement PBI/Tchebycheff using tensor operations."
     }
   ]
 }
