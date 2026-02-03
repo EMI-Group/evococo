@@ -1,5 +1,5 @@
 {
-  "version": "1.2",
+  "version": "1.3",
   "rules": [
     {
       "id": "Bug #1 (Integer Sentinel)",
@@ -104,6 +104,22 @@
       "keywords": ["rand", "randint", "sample", "mutation", "crossover"],
       "always_apply": true,
       "instruction": "ALWAYS specify `device=...` in random generation functions: `torch.randint(..., device=self.lb.device)`."
+    },
+    {
+      "id": "Bug #17 (SDR Logic Fidelity)",
+      "description": "SDR algorithm has specific non-standard math that must be preserved to prevent infinite loops and non-convergence.",
+      "action": "must",
+      "keywords": ["sdr", "angle", "theta", "dominance", "nsga-ii/sdr", "deadlock"],
+      "always_apply": false,
+      "instruction": "1. Accumulate `zmin` historically. 2. Round data before `unique`. 3. Angle(eye)=Pi/2 (Cosine=0). 4. Use `unique` on min_angles before finding median. 5. CRITICAL: `Theta` must be clamped >= 1.0 (`max(1, ...)`). 6. In front peeling loop, add a safety check: if `num_in_front == 0`, treat all remaining individuals as the current front to break deadlocks."
+    },
+    {
+      "id": "Bug #18 (Normalization Trigger)",
+      "description": "MATLAB normalization often uses a global condition `0.05*max(range) < min(range)`.",
+      "action": "must",
+      "keywords": ["normalization", "range", "zmin", "zmax"],
+      "always_apply": false,
+      "instruction": "Check the global condition `0.05*max(range) < min(range)` first. If True, divide ALL objs by range. If False, divide NONE. Do NOT use dimension-wise `torch.where`."
     }
   ]
 }
