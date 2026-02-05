@@ -7,7 +7,6 @@ import uuid
 import time
 import re
 
-# 注意：这里导入了 _load_prompt，请确保 generator.py 里没有把 _load_prompt 设为私有
 from .generator import generate_llm_response
 from .executor import (
     execute_code,
@@ -30,7 +29,7 @@ RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
 GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
 
 # 并行分支数量
-NUM_BRANCHES = 3
+NUM_BRANCHES = 5
 
 
 # --- 数据加载辅助函数 ---
@@ -140,31 +139,46 @@ async def run_single_branch_lifecycle(
     独立运行一个代码生成分支：Coder -> Static Fix -> Runtime Fix
     """
     branch_id = f"br{branch_idx}"
-
-    # 【修改点】使用 os.path.join 创建嵌套目录结构
-    # 结果示例: "20260204_023153/br0"
-    # executor 会自动在 temp_workspace 下创建父目录和子目录
     session_id = os.path.join(base_session_id, branch_id)
 
-    # 增加一点 temperature 的扰动，保证多样性
-    temp_offset = 0.05 * branch_idx
+    # 策略注入：5种不同的张量化流派
+    strategies = [
+        "STRATEGY: BROADCASTING EXPERT. Use standard PyTorch broadcasting (unsqueeze, expand) for all matrix operations. Strictly NO for-loops.",
+        "STRATEGY: EINSUM OPTIMIZATION. Use `torch.einsum` for all matrix multiplications and dimension reductions. It is cleaner and faster.",
+        "STRATEGY: MASKED OPERATIONS. Avoid `if/else` logic. Use `torch.where`, `torch.masked_fill` to handle conditional logic on tensors.",
+        "STRATEGY: IN-PLACE EFFICIENCY. Minimize memory overhead. Use in-place operations (`add_`, `mul_`) where possible.",
+        "STRATEGY: ADVANCED OPS. Use high-level PyTorch functions like `torch.cdist`, `torch.linalg.norm` instead of manual formulas.",
+    ]
+
+    current_strategy = strategies[branch_idx % len(strategies)]
+    temp_offset = 0.08 * branch_idx
+    current_temp = 0.6 + temp_offset
 
     log_prefix = f"[Branch {branch_idx}]"
-    print(f">>> {log_prefix} Started flow...")
+    print(
+        f">>> {log_prefix} Started. Strategy: {current_strategy[:25]}... Temp: {current_temp:.2f}"
+    )
+
+    enhanced_constraints = (
+        f"{constraints_str}\n\n"
+        f"!!! CRITICAL REQUIREMENT FOR THIS BRANCH !!!\n"
+        f"{current_strategy}\n"
+        f"!!! DO NOT USE PYTHON LOOPS FOR CALCULATION !!!"
+    )
 
     current_code = ""
 
     try:
         # =================================================
-        # STEP 4: CODER (Draft)
+        # STEP 4: CODER
         # =================================================
         current_code = await generate_llm_response(
             "4_coder.md",
-            constraints=constraints_str,
+            constraints=enhanced_constraints,
             blueprint_plan=blueprint_md,
             asset_library=asset_lib_content,
             few_shot_examples=few_shot_content,
-            temperature=0.7 + temp_offset,
+            temperature=current_temp,
         )
         current_code = current_code.replace("```python", "").replace("```", "").strip()
 
@@ -172,14 +186,14 @@ async def run_single_branch_lifecycle(
             save_artifact(run_dir, f"4_code_draft_{branch_id}.py", current_code)
 
         # =================================================
-        # STEP 5: STATIC FIXER (Ruff Analysis)
+        # STEP 5: STATIC FIXER
         # =================================================
         MAX_STATIC_RETRIES = 2
         for i in range(MAX_STATIC_RETRIES + 1):
             is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
 
             if "not found" in error_msg and "ruff" in error_msg:
-                print(f">>> {log_prefix} Ruff not found, skipping static check.")
+                print(f">>> {log_prefix} Ruff not found, skipping.")
                 break
 
             if is_valid:
@@ -194,23 +208,21 @@ async def run_single_branch_lifecycle(
                     current_code.replace("```python", "").replace("```", "").strip()
                 )
             else:
-                print(f">>> {log_prefix} Static Check Failed, proceeding anyway.")
+                print(f">>> {log_prefix} Static Check Failed, proceeding.")
 
         if run_dir:
             save_artifact(run_dir, f"5_code_static_final_{branch_id}.py", current_code)
 
         # =================================================
-        # STEP 6: RUNTIME FIXER (The Tournament Trial)
+        # STEP 6: RUNTIME FIXER
         # =================================================
         MAX_RUNTIME_RETRIES = 2
         best_igd_in_branch = float("inf")
         best_history = []
 
-        # 全并行模式（无锁）
         for attempt in range(MAX_RUNTIME_RETRIES + 1):
             print(f">>> {log_prefix} Runtime Attempt {attempt + 1}...")
 
-            # 使用 execute_code_trial 获取详细指标
             report = execute_code_trial(current_code, session_id)
 
             if run_dir:
@@ -220,7 +232,7 @@ async def run_single_branch_lifecycle(
                 save_artifact(
                     run_dir,
                     f"6_log_{branch_id}_try{attempt}.txt",
-                    f"IGD: {report['last_igd']}\nErr: {report['stderr']}\nOut: {report['stdout'][:500]}",
+                    f"IGD: {report['last_igd']}\nErr: {report['stderr']}",
                 )
 
             if report["success"]:
@@ -228,7 +240,6 @@ async def run_single_branch_lifecycle(
                     best_igd_in_branch = report["last_igd"]
                     best_history = report["igd_history"]
                     print(f">>> {log_prefix} Success! IGD={best_igd_in_branch}")
-
                     cleanup_workspace(session_id)
                     return {
                         "success": True,
@@ -243,9 +254,7 @@ async def run_single_branch_lifecycle(
             if attempt < MAX_RUNTIME_RETRIES:
                 err_summary = report["stderr"]
                 if report["has_nan"]:
-                    err_summary = (
-                        "Runtime Warning: NaN values detected. Check division by zero."
-                    )
+                    err_summary = "Runtime Warning: NaN values detected."
                 elif not report["success"] and not err_summary:
                     err_summary = f"Runtime Error: Execution failed. output: {report['stdout'][-200:]}"
 
@@ -263,7 +272,6 @@ async def run_single_branch_lifecycle(
             else:
                 print(f">>> {log_prefix} Failed after max retries.")
 
-        # 最终失败
         cleanup_workspace(session_id)
         return {
             "success": False,
@@ -292,13 +300,13 @@ async def run_single_branch_lifecycle(
 async def run_pipeline(matlab_code: str, status_callback):
     print(">>> [DEBUG] run_pipeline started!")
 
-    # 0. 加载外部数据
+    # 0. 加载资源
     rag_db = load_rag_db()
     global_spec_content = load_global_spec()
     asset_lib_content = load_resource("resources_assets.md")
     few_shot_content = load_resource("resources_examples.md")
 
-    # 1. 初始化运行目录和 Session
+    # 1. 初始化
     try:
         run_dir = ensure_history_dir()
     except Exception:
@@ -309,32 +317,18 @@ async def run_pipeline(matlab_code: str, status_callback):
     if run_dir:
         save_artifact(run_dir, "0_input.m", matlab_code)
 
-    await status_callback(
-        "init",
-        "Pipeline Initialized",
-        f"Session: {session_id}",
-    )
+    await status_callback("init", "Pipeline Initialized", f"Session: {session_id}")
 
     try:
-        # =================================================
-        # STEP 1: ANALYST
-        # =================================================
-        print(">>> [DEBUG] Step 1: Analyst")
+        # Step 1: Analyst
         await status_callback(
-            "step_start",
-            "Step 1: Analyst",
-            "Analyzing Logic...",
-            step_id="analyst",
-            icon="fa-magnifying-glass",
+            "step_start", "Step 1: Analyst", "Analyzing Logic...", step_id="analyst"
         )
-
         ir_md = await generate_llm_response(
             "1_analyst.md", matlab_code=matlab_code, global_spec=global_spec_content
         )
-
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
-
         await status_callback("result_ir", "", ir_md)
         await status_callback(
             "step_done",
@@ -344,16 +338,9 @@ async def run_pipeline(matlab_code: str, status_callback):
             is_success=True,
         )
 
-        # =================================================
-        # STEP 2: RAG
-        # =================================================
-        print(">>> [DEBUG] Step 2: RAG")
+        # Step 2: RAG
         await status_callback(
-            "step_start",
-            "Step 2: RAG",
-            "Scanning Knowledge...",
-            step_id="rag",
-            icon="fa-book-open",
+            "step_start", "Step 2: RAG", "Scanning Knowledge...", step_id="rag"
         )
 
         rules_context_list = []
@@ -361,17 +348,14 @@ async def run_pipeline(matlab_code: str, status_callback):
             tag = "[UNIVERSAL]" if r.get("always_apply") else "[CONDITIONAL]"
             desc = r.get("description", "No description")
             keywords = ", ".join(r.get("keywords", []))
-            rule_entry = (
+            rules_context_list.append(
                 f"ID: {r['id']}\nType: {tag}\nDesc: {desc}\nKeywords: {keywords}"
             )
-            rules_context_list.append(rule_entry)
-
         all_rules_desc = "\n---\n".join(rules_context_list)
 
         rag_str = await generate_llm_response(
             "2_rag_selector.md", rules_context=all_rules_desc, analyst_report=ir_md
         )
-
         rag_json = extract_json(rag_str)
         selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
 
@@ -390,25 +374,21 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         for no in selected_bug_numbers:
             r = no_to_rule.get(no)
-            if r:
-                rid = r.get("id", "")
-                if rid and rid not in seen_ids:
-                    instruction = r.get("instruction", r.get("description", ""))
-                    matched_rules_list.append(f"[{rid}] {instruction}")
-                    seen_ids.add(rid)
-
+            if r and r.get("id") not in seen_ids:
+                matched_rules_list.append(
+                    f"[{r['id']}] {r.get('instruction', r.get('description', ''))}"
+                )
+                seen_ids.add(r["id"])
         for r in rag_db:
-            if r.get("always_apply", False):
-                rid = r.get("id", "")
-                if rid and rid not in seen_ids:
-                    instruction = r.get("instruction", r.get("description", ""))
-                    matched_rules_list.append(f"[{rid}] {instruction}")
-                    seen_ids.add(rid)
+            if r.get("always_apply") and r.get("id") not in seen_ids:
+                matched_rules_list.append(
+                    f"[{r['id']}] {r.get('instruction', r.get('description', ''))}"
+                )
+                seen_ids.add(r["id"])
 
         matched_rules_text = "\n".join(matched_rules_list)
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_json)
-
         await status_callback(
             "step_done",
             "RAG Done",
@@ -418,25 +398,18 @@ async def run_pipeline(matlab_code: str, status_callback):
             is_success=True,
         )
 
-        # =================================================
-        # STEP 3: ARCHITECT
-        # =================================================
-        print(">>> [DEBUG] Step 3: Architect")
+        # Step 3: Architect
         await status_callback(
             "step_start",
             "Step 3: Architect",
             "Designing Blueprint...",
             step_id="architect",
-            icon="fa-compass-drafting",
         )
-
         blueprint_md = await generate_llm_response(
             "3_architect.md", rag_rules=matched_rules_text, analyst_report=ir_md
         )
-
         if run_dir:
             save_artifact(run_dir, "3_blueprint.md", blueprint_md)
-
         await status_callback("result_blueprint", "", blueprint_md)
         await status_callback(
             "step_done",
@@ -446,16 +419,13 @@ async def run_pipeline(matlab_code: str, status_callback):
             is_success=True,
         )
 
-        # =================================================
-        # STEP 4-6: THE TOURNAMENT (Parallel Execution)
-        # =================================================
+        # Step 4-6: Tournament
         print(f">>> [DEBUG] Starting {NUM_BRANCHES} parallel branches...")
         await status_callback(
             "step_start",
             "Step 4-6: Tournament",
-            f"Racing {NUM_BRANCHES} candidates in parallel...",
+            f"Racing {NUM_BRANCHES} candidates...",
             step_id="tournament",
-            icon="fa-flag-checkered",
         )
 
         tasks = []
@@ -476,20 +446,16 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         results = await asyncio.gather(*tasks)
 
-        # =================================================
-        # STEP 7: SELECTOR (LLM Judge)
-        # =================================================
+        # Step 7: Selector
         await status_callback(
             "step_start",
             "Step 7: Judge",
             "Selecting Best Implementation...",
             step_id="selector",
-            icon="fa-gavel",
         )
 
         candidates_data = []
         valid_candidates_exist = False
-
         for res in results:
             if res["success"]:
                 valid_candidates_exist = True
@@ -507,10 +473,11 @@ async def run_pipeline(matlab_code: str, status_callback):
             save_artifact(run_dir, "7_candidates_raw.json", candidates_data)
 
         candidates_json = json.dumps(candidates_data, indent=2)
+
         final_code = ""
 
         if not valid_candidates_exist:
-            print(">>> All branches failed. Picking the first one for debug.")
+            print(">>> All branches failed.")
             final_code = results[0]["code"]
             await status_callback(
                 "step_done",
@@ -521,18 +488,62 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         else:
             try:
-                print(">>> Asking Judge LLM to select best code...")
+                print(">>> Asking Judge LLM...")
 
-                selected_code = await generate_llm_response(
+                # 3. 发送请求
+                judge_response = await generate_llm_response(
                     "7_selector.md", candidates_list=candidates_json
                 )
 
-                final_code = (
-                    selected_code.replace("```python", "").replace("```", "").strip()
-                )
+                if run_dir:
+                    save_artifact(run_dir, "7_judge_raw.md", judge_response)
+
+                # =========================================================
+                # 【核心修改】 极简分隔符解析 (Delimiter Parsing)
+                # =========================================================
+                reasoning = "Judge provided no specific reasoning."
+                final_code = ""
+
+                # 1. 提取代码 (Code)
+                if (
+                    "[JUDGE_CODE_START]" in judge_response
+                    and "[JUDGE_CODE_END]" in judge_response
+                ):
+                    final_code = (
+                        judge_response.split("[JUDGE_CODE_START]")[1]
+                        .split("[JUDGE_CODE_END]")[0]
+                        .strip()
+                    )
+                else:
+                    # 兜底：假设全是代码
+                    final_code = (
+                        judge_response.replace("```python", "")
+                        .replace("```", "")
+                        .strip()
+                    )
+
+                # 2. 提取理由 (Reasoning)
+                if (
+                    "[JUDGE_REASONING_START]" in judge_response
+                    and "[JUDGE_REASONING_END]" in judge_response
+                ):
+                    reasoning = (
+                        judge_response.split("[JUDGE_REASONING_START]")[1]
+                        .split("[JUDGE_REASONING_END]")[0]
+                        .strip()
+                    )
+
+                # =========================================================
+
+                # 5. 在后端控制台打印理由
+                print("\n" + "=" * 40)
+                print("       ⚖️  JUDGE'S VERDICT  ⚖️")
+                print("=" * 40)
+                print(reasoning)
+                print("=" * 40 + "\n")
 
                 if run_dir:
-                    save_artifact(run_dir, "7_judge_response.md", selected_code)
+                    save_artifact(run_dir, "7_judge_reasoning.txt", reasoning)
 
                 await status_callback(
                     "step_done",
@@ -540,10 +551,11 @@ async def run_pipeline(matlab_code: str, status_callback):
                     "Winner Selected",
                     step_id="selector",
                     is_success=True,
+                    extra_data={"report": reasoning},
                 )
 
             except Exception as e:
-                print(f">>> Judge Failed: {e}. Fallback to Greedy.")
+                print(f">>> Judge Failed: {e}. Fallback.")
                 best_res = min(
                     [r for r in results if r["success"]],
                     key=lambda x: x["igd"],
@@ -551,19 +563,12 @@ async def run_pipeline(matlab_code: str, status_callback):
                 )
                 final_code = best_res["code"]
 
-        # =================================================
-        # FINISH
-        # =================================================
         await status_callback("result_code", "Final Optimized Code", final_code)
-
-        if run_dir:
-            save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)
-
+        if run_dir: save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)
         await status_callback("step_done", "Success", "Pipeline Complete!", step_id="finish", is_success=True)
 
     except Exception as e:
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
-        if run_dir:
-            save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
+        if run_dir: save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
         await status_callback("fatal", "System Error", str(e))
