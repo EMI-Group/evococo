@@ -7,6 +7,7 @@ import uuid
 import time
 import re
 
+# 注意：这里导入了 _load_prompt，请确保 generator.py 里没有把 _load_prompt 设为私有
 from .generator import generate_llm_response
 from .executor import (
     execute_code,
@@ -139,7 +140,11 @@ async def run_single_branch_lifecycle(
     独立运行一个代码生成分支：Coder -> Static Fix -> Runtime Fix
     """
     branch_id = f"br{branch_idx}"
-    session_id = f"{base_session_id}_{branch_id}"
+
+    # 【修改点】使用 os.path.join 创建嵌套目录结构
+    # 结果示例: "20260204_023153/br0"
+    # executor 会自动在 temp_workspace 下创建父目录和子目录
+    session_id = os.path.join(base_session_id, branch_id)
 
     # 增加一点 temperature 的扰动，保证多样性
     temp_offset = 0.05 * branch_idx
@@ -331,7 +336,6 @@ async def run_pipeline(matlab_code: str, status_callback):
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
 
         await status_callback("result_ir", "", ir_md)
-        # 【修改点】 显式添加 is_success=True
         await status_callback(
             "step_done",
             "Analyst Done",
@@ -405,7 +409,6 @@ async def run_pipeline(matlab_code: str, status_callback):
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_json)
 
-        # 【修改点】 显式添加 is_success=True
         await status_callback(
             "step_done",
             "RAG Done",
@@ -435,7 +438,6 @@ async def run_pipeline(matlab_code: str, status_callback):
             save_artifact(run_dir, "3_blueprint.md", blueprint_md)
 
         await status_callback("result_blueprint", "", blueprint_md)
-        # 【修改点】 显式添加 is_success=True
         await status_callback(
             "step_done",
             "Architect Done",
