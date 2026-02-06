@@ -22,17 +22,51 @@
         ::-webkit-scrollbar-thumb { background: #475569; border-radius: 5px; border: 2px solid #1e293b; }
         ::-webkit-scrollbar-thumb:hover { background: #64748b; }
 
-        /* --- 竖线对齐 --- */
+        /* --- 核心修复：竖线对齐 --- */
         .step-line {
             position: absolute;
-            left: 19px; /* w-10 是 40px，中心 20px，线宽 2px，所以 19px */
+            left: 19px;
             top: 40px;
             bottom: -20px;
             width: 2px;
             background-color: #334155;
-            z-index: 0; /* 必须比图标的 z-10 小 */
+            z-index: 0;
         }
         .step-item:last-child .step-line { display: none; }
+
+        /* --- 拖拽条样式 (Resizers) --- */
+        .resizer-x {
+            width: 5px;
+            cursor: col-resize;
+            background-color: #0f172a; /* 默认深色，不突兀 */
+            transition: background-color 0.2s;
+            z-index: 50;
+            flex-shrink: 0;
+            border-left: 1px solid #1e293b;
+            border-right: 1px solid #1e293b;
+        }
+        .resizer-x:hover, .resizer-x.resizing {
+            background-color: #6366f1; /* 拖动时高亮紫色 */
+        }
+
+        .resizer-y {
+            height: 5px;
+            cursor: row-resize;
+            background-color: #0f172a;
+            transition: background-color 0.2s;
+            z-index: 50;
+            flex-shrink: 0;
+            border-top: 1px solid #1e293b;
+            border-bottom: 1px solid #1e293b;
+        }
+        .resizer-y:hover, .resizer-y.resizing {
+            background-color: #6366f1;
+        }
+
+        /* 拖动时禁止选中文字 */
+        body.resizing { cursor: col-resize; user-select: none; }
+        body.resizing-row { cursor: row-resize; user-select: none; }
+
 
         /* Animations */
         @keyframes fadeInUp {
@@ -75,9 +109,9 @@
         </div>
     </header>
 
-    <main class="flex-1 flex overflow-hidden">
+    <main class="flex-1 flex overflow-hidden" id="main-container">
 
-        <section class="w-[32%] min-w-[320px] flex flex-col border-r border-slate-800 bg-slate-900">
+        <section id="panel-left" style="width: 32%; min-width: 250px;" class="flex flex-col border-r border-slate-800 bg-slate-900">
             <div class="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
                 <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                     <i class="fa-brands fa-python text-sm"></i> Source (MATLAB)
@@ -180,25 +214,31 @@ end
             </div>
         </section>
 
-        <section class="w-[33%] min-w-[350px] flex flex-col border-r border-slate-800 bg-slate-950 relative">
+        <div class="resizer-x" id="resizer-left"></div>
 
-            <div class="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-800/50 backdrop-blur">
-                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                    <i class="fa-solid fa-layer-group text-sm"></i> Execution Trace
-                </h2>
-            </div>
+        <section id="panel-middle" style="width: 33%; min-width: 300px;" class="flex flex-col border-r border-slate-800 bg-slate-950 relative">
 
-            <div class="flex-1 overflow-y-auto p-6 pb-10 relative scroll-smooth" id="flow-container">
-                <div class="flex flex-col items-center justify-center h-full text-slate-600 opacity-60" id="empty-state">
-                    <div class="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center mb-4 border border-slate-800">
-                        <i class="fa-solid fa-network-wired text-3xl"></i>
+            <div id="panel-middle-top" style="height: 65%; min-height: 150px;" class="flex flex-col">
+                <div class="p-3 border-b border-slate-800 flex justify-between items-center bg-slate-800/50 backdrop-blur shrink-0">
+                    <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                        <i class="fa-solid fa-layer-group text-sm"></i> Execution Trace
+                    </h2>
+                </div>
+
+                <div class="flex-1 overflow-y-auto p-6 pb-10 relative scroll-smooth" id="flow-container">
+                    <div class="flex flex-col items-center justify-center h-full text-slate-600 opacity-60" id="empty-state">
+                        <div class="w-20 h-20 rounded-full bg-slate-900 flex items-center justify-center mb-4 border border-slate-800">
+                            <i class="fa-solid fa-network-wired text-3xl"></i>
+                        </div>
+                        <p class="text-sm font-medium">Pipeline Idle</p>
                     </div>
-                    <p class="text-sm font-medium">Pipeline Idle</p>
                 </div>
             </div>
 
-            <div class="h-60 border-t border-slate-800 bg-[#0a0a0a] flex flex-col shrink-0">
-                <div class="px-4 py-2 bg-slate-900/80 border-b border-slate-800 flex justify-between items-center backdrop-blur">
+            <div class="resizer-y" id="resizer-middle"></div>
+
+            <div id="panel-middle-bottom" style="flex: 1; min-height: 100px;" class="flex flex-col bg-[#0a0a0a]">
+                <div class="px-4 py-2 bg-slate-900/80 border-b border-slate-800 flex justify-between items-center backdrop-blur shrink-0">
                     <span class="text-xs text-slate-400 font-bold font-mono"><i class="fa-solid fa-terminal mr-2"></i>RUNTIME LOGS</span>
                     <button onclick="document.getElementById('terminal-content').innerHTML=''" class="text-xs text-slate-500 hover:text-slate-300 transition-colors" title="Clear"><i class="fa-solid fa-trash"></i></button>
                 </div>
@@ -208,7 +248,9 @@ end
             </div>
         </section>
 
-        <section class="flex-1 min-w-[450px] flex flex-col bg-[#1e1e1e]">
+        <div class="resizer-x" id="resizer-right"></div>
+
+        <section id="panel-right" style="flex: 1; min-width: 300px;" class="flex flex-col bg-[#1e1e1e]">
             <div class="flex border-b border-slate-800 bg-slate-900">
                 <button id="tab-code" class="tab-btn flex-1 px-4 py-3.5 text-sm font-semibold text-indigo-400 border-b-2 border-indigo-500 bg-slate-800 transition-all" onclick="switchTab('code')">
                     <i class="fa-solid fa-code mr-2"></i>Python
@@ -377,19 +419,14 @@ end
             card.classList.remove('tournament-active');
             tag.classList.remove('animate-pulse');
 
-            // 【核心修复】使用不透明背景 (bg-slate-800) 来遮挡底部的线
-            // 绿色状态
             if (success) {
                 icon.className = "status-icon fa-solid fa-check text-green-400 text-base";
-                // 关键点：使用 bg-slate-800 (不透明) 代替 bg-green-900/20
                 bg.className = "status-bg w-10 h-10 rounded-xl bg-slate-800 border border-green-500 flex items-center justify-center shadow-[0_0_10px_rgba(34,197,94,0.2)]";
                 tag.textContent = "DONE";
                 tag.className = "text-xs px-2.5 py-1 rounded bg-green-900/20 text-green-400 font-mono step-tag uppercase border border-green-800 font-bold tracking-wider";
             }
-            // 红色状态
             else {
                 icon.className = "status-icon fa-solid fa-xmark text-red-400 text-base";
-                // 关键点：使用 bg-slate-800 (不透明) 代替 bg-red-900/20
                 bg.className = "status-bg w-10 h-10 rounded-xl bg-slate-800 border border-red-500 flex items-center justify-center shadow-[0_0_10px_rgba(239,68,68,0.2)]";
                 tag.textContent = "FAIL";
                 tag.className = "text-xs px-2.5 py-1 rounded bg-red-900/20 text-red-400 font-mono step-tag uppercase border border-red-800 font-bold tracking-wider";
@@ -501,6 +538,89 @@ end
                 }, 2000);
             }
         }
+
+        // --- 新增：拖拽调整大小逻辑 ---
+        function initResizers() {
+            const mainContainer = document.getElementById('main-container');
+
+            // 1. 左侧拖动条 (Resizer Left)
+            const resizerLeft = document.getElementById('resizer-left');
+            const panelLeft = document.getElementById('panel-left');
+
+            makeResizable(resizerLeft, (deltaX, deltaY) => {
+                const newWidth = panelLeft.offsetWidth + deltaX;
+                // 限制最小宽度，防止拖太小
+                if (newWidth > 200 && newWidth < mainContainer.offsetWidth - 600) {
+                    panelLeft.style.width = `${newWidth}px`;
+                }
+            }, 'col');
+
+            // 2. 右侧拖动条 (Resizer Right)
+            // 拖动右侧条时，改变中间面板的宽度
+            const resizerRight = document.getElementById('resizer-right');
+            const panelMiddle = document.getElementById('panel-middle');
+
+            makeResizable(resizerRight, (deltaX, deltaY) => {
+                const newWidth = panelMiddle.offsetWidth + deltaX;
+                // 限制宽度
+                if (newWidth > 250 && newWidth < mainContainer.offsetWidth - panelLeft.offsetWidth - 250) {
+                    panelMiddle.style.width = `${newWidth}px`;
+                }
+            }, 'col');
+
+            // 3. 中间横向拖动条 (Resizer Middle)
+            const resizerMiddle = document.getElementById('resizer-middle');
+            const panelMiddleTop = document.getElementById('panel-middle-top');
+            const panelMiddleContainer = document.getElementById('panel-middle');
+
+            makeResizable(resizerMiddle, (deltaX, deltaY) => {
+                const newHeight = panelMiddleTop.offsetHeight + deltaY;
+                if (newHeight > 100 && newHeight < panelMiddleContainer.offsetHeight - 100) {
+                    panelMiddleTop.style.height = `${newHeight}px`;
+                }
+            }, 'row');
+        }
+
+        // 通用拖拽函数
+        function makeResizable(resizer, onResize, direction) {
+            let startX = 0;
+            let startY = 0;
+
+            const onMouseDown = (e) => {
+                startX = e.clientX;
+                startY = e.clientY;
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+
+                resizer.classList.add('resizing');
+                document.body.classList.add(direction === 'col' ? 'resizing' : 'resizing-row');
+            };
+
+            const onMouseMove = (e) => {
+                const deltaX = e.clientX - startX;
+                const deltaY = e.clientY - startY;
+
+                onResize(deltaX, deltaY);
+
+                startX = e.clientX;
+                startY = e.clientY;
+            };
+
+            const onMouseUp = () => {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+
+                resizer.classList.remove('resizing');
+                document.body.classList.remove('resizing', 'resizing-row');
+                document.body.classList.remove('resizing');
+            };
+
+            resizer.addEventListener('mousedown', onMouseDown);
+        }
+
+        // 初始化拖拽
+        initResizers();
     </script>
 </body>
 </html>
