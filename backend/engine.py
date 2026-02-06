@@ -38,20 +38,14 @@ NUM_BRANCHES = 5
 def load_rag_db():
     """从 JSON 文件加载 RAG 规则库"""
     if not os.path.exists(RULES_DB_PATH):
-        print(f">>> [ERROR] Rules DB not found at {RULES_DB_PATH}")
         return []
-
     try:
         with open(RULES_DB_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-
         if isinstance(data, dict) and "rules" in data:
             return data["rules"]
-        if isinstance(data, list):
-            return data
-        return []
-    except Exception as e:
-        print(f">>> [ERROR] Failed to load rag_db.json: {e}")
+        return data if isinstance(data, list) else []
+    except:
         return []
 
 
@@ -61,20 +55,20 @@ def load_global_spec():
         try:
             with open(GLOBAL_SPEC_PATH, "r", encoding="utf-8") as f:
                 return f.read()
-        except Exception as e:
-            print(f">>> [ERROR] Failed to load 0_global_spec.md: {e}")
+        except:
+            pass
     return ""
 
 
 def load_resource(filename):
-    """加载资源文件 (SDK, Examples)"""
+    """加载资源文件 (SDK, Examples, Reference Context)"""
     path = os.path.join(PROMPTS_DIR, filename)
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return f.read()
-        except Exception as e:
-            print(f">>> [ERROR] Failed to load {filename}: {e}")
+        except:
+            pass
     return ""
 
 
@@ -100,8 +94,8 @@ def save_artifact(run_dir, filename, content):
                 f.write(json.dumps(content, indent=2, ensure_ascii=False))
             else:
                 f.write(str(content))
-    except Exception as e:
-        print(f">>> [SAVE ERROR] Failed to save {filename}: {e}")
+    except:
+        pass
 
 
 def extract_json(text):
@@ -113,12 +107,7 @@ def extract_json(text):
             text = text.split("```")[0]
         return json.loads(text.strip())
     except:
-        try:
-            start = text.find("{")
-            end = text.rfind("}") + 1
-            return json.loads(text[start:end])
-        except:
-            return {}
+        return {}
 
 
 # --- 核心逻辑：单分支生命周期 ---
@@ -141,8 +130,18 @@ async def run_single_branch_lifecycle(
     branch_id = f"br{branch_idx}"
     session_id = os.path.join(base_session_id, branch_id)
 
+    # 日志标签
+    L_TAG = f"Branch {branch_idx}"
+
     # 策略注入：5种不同的张量化流派
-    strategies = [
+    strategies_short = [
+        "BROADCASTING (No Loops)",
+        "EINSUM OPTIMIZATION",
+        "MASKED OPS (No If/Else)",
+        "IN-PLACE EFFICIENCY",
+        "ADVANCED OPS (cdist)",
+    ]
+    strategies_full = [
         "STRATEGY: BROADCASTING EXPERT. Use standard PyTorch broadcasting (unsqueeze, expand) for all matrix operations. Strictly NO for-loops.",
         "STRATEGY: EINSUM OPTIMIZATION. Use `torch.einsum` for all matrix multiplications and dimension reductions. It is cleaner and faster.",
         "STRATEGY: MASKED OPERATIONS. Avoid `if/else` logic. Use `torch.where`, `torch.masked_fill` to handle conditional logic on tensors.",
@@ -150,19 +149,21 @@ async def run_single_branch_lifecycle(
         "STRATEGY: ADVANCED OPS. Use high-level PyTorch functions like `torch.cdist`, `torch.linalg.norm` instead of manual formulas.",
     ]
 
-    current_strategy = strategies[branch_idx % len(strategies)]
+    current_strategy_short = strategies_short[branch_idx % len(strategies_short)]
+    current_strategy_full = strategies_full[branch_idx % len(strategies_full)]
+
     temp_offset = 0.08 * branch_idx
     current_temp = 0.6 + temp_offset
 
-    log_prefix = f"[Branch {branch_idx}]"
-    print(
-        f">>> {log_prefix} Started. Strategy: {current_strategy[:25]}... Temp: {current_temp:.2f}"
+    # 【LOG】分支启动
+    await status_callback(
+        "log", L_TAG, f"Start | Strat: {current_strategy_short} | T={current_temp:.2f}"
     )
 
     enhanced_constraints = (
         f"{constraints_str}\n\n"
         f"!!! CRITICAL REQUIREMENT FOR THIS BRANCH !!!\n"
-        f"{current_strategy}\n"
+        f"{current_strategy_full}\n"
         f"!!! DO NOT USE PYTHON LOOPS FOR CALCULATION !!!"
     )
 
@@ -185,6 +186,8 @@ async def run_single_branch_lifecycle(
         if run_dir:
             save_artifact(run_dir, f"4_code_draft_{branch_id}.py", current_code)
 
+        await status_callback("log", L_TAG, "Coder finished draft.")
+
         # =================================================
         # STEP 5: STATIC FIXER
         # =================================================
@@ -192,15 +195,19 @@ async def run_single_branch_lifecycle(
         for i in range(MAX_STATIC_RETRIES + 1):
             is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
 
-            if "not found" in error_msg and "ruff" in error_msg:
-                print(f">>> {log_prefix} Ruff not found, skipping.")
+            if is_valid:
+                await status_callback("log", L_TAG, "Static Check: PASSED.")
                 break
 
-            if is_valid:
+            if "not found" in error_msg and "ruff" in error_msg:
+                await status_callback("log", L_TAG, "Ruff missing, skipping check.")
                 break
+
+            await status_callback(
+                "log", L_TAG, f"Static Check Failed (Try {i + 1}). Fixing..."
+            )
 
             if i < MAX_STATIC_RETRIES:
-                print(f">>> {log_prefix} Static Fix {i + 1}...")
                 current_code = await generate_llm_response(
                     "5_static_fixer.md", error_log=error_msg, previous_code=current_code
                 )
@@ -208,7 +215,9 @@ async def run_single_branch_lifecycle(
                     current_code.replace("```python", "").replace("```", "").strip()
                 )
             else:
-                print(f">>> {log_prefix} Static Check Failed, proceeding.")
+                await status_callback(
+                    "log", L_TAG, "Static Check failed, proceeding anyway."
+                )
 
         if run_dir:
             save_artifact(run_dir, f"5_code_static_final_{branch_id}.py", current_code)
@@ -221,7 +230,9 @@ async def run_single_branch_lifecycle(
         best_history = []
 
         for attempt in range(MAX_RUNTIME_RETRIES + 1):
-            print(f">>> {log_prefix} Runtime Attempt {attempt + 1}...")
+            await status_callback(
+                "log", L_TAG, f"Runtime Attempt {attempt + 1} executing..."
+            )
 
             report = execute_code_trial(current_code, session_id)
 
@@ -239,7 +250,14 @@ async def run_single_branch_lifecycle(
                 if not report["has_nan"]:
                     best_igd_in_branch = report["last_igd"]
                     best_history = report["igd_history"]
-                    print(f">>> {log_prefix} Success! IGD={best_igd_in_branch}")
+
+                    # 【LOG】成功日志 (PERF 颜色)
+                    await status_callback(
+                        "log",
+                        "PERF",
+                        f"[{L_TAG}] Success! IGD: {best_igd_in_branch:.5f}",
+                    )
+
                     cleanup_workspace(session_id)
                     return {
                         "success": True,
@@ -249,7 +267,7 @@ async def run_single_branch_lifecycle(
                         "branch_idx": branch_idx,
                     }
                 else:
-                    print(f">>> {log_prefix} Success but NaN detected.")
+                    await status_callback("log", "ERR", f"[{L_TAG}] NaN Detected.")
 
             if attempt < MAX_RUNTIME_RETRIES:
                 err_summary = report["stderr"]
@@ -257,6 +275,10 @@ async def run_single_branch_lifecycle(
                     err_summary = "Runtime Warning: NaN values detected."
                 elif not report["success"] and not err_summary:
                     err_summary = f"Runtime Error: Execution failed. output: {report['stdout'][-200:]}"
+
+                # 【LOG】失败简报
+                short_err = err_summary.split("\n")[-1][:60]
+                await status_callback("log", "ERR", f"[{L_TAG}] Fix... ({short_err})")
 
                 current_code = await generate_llm_response(
                     "6_runtime_fixer.md",
@@ -270,7 +292,9 @@ async def run_single_branch_lifecycle(
                     current_code.replace("```python", "").replace("```", "").strip()
                 )
             else:
-                print(f">>> {log_prefix} Failed after max retries.")
+                await status_callback(
+                    "log", "FAIL", f"[{L_TAG}] Failed after max retries."
+                )
 
         cleanup_workspace(session_id)
         return {
@@ -282,7 +306,7 @@ async def run_single_branch_lifecycle(
         }
 
     except Exception as e:
-        print(f">>> {log_prefix} Crashed: {e}")
+        await status_callback("log", "FATAL", f"[{L_TAG}] Crashed: {str(e)}")
         traceback.print_exc()
         cleanup_workspace(session_id)
         return {
@@ -298,13 +322,15 @@ async def run_single_branch_lifecycle(
 
 
 async def run_pipeline(matlab_code: str, status_callback):
-    print(">>> [DEBUG] run_pipeline started!")
-
     # 0. 加载资源
     rag_db = load_rag_db()
     global_spec_content = load_global_spec()
     asset_lib_content = load_resource("resources_assets.md")
     few_shot_content = load_resource("resources_examples.md")
+
+    # 【新增】加载 PlatEMO 参考背景文档
+    # 这对应了我们刚才创建的 reference_platemo.md
+    reference_content = load_resource("reference_platemo.md")
 
     # 1. 初始化
     try:
@@ -318,15 +344,22 @@ async def run_pipeline(matlab_code: str, status_callback):
         save_artifact(run_dir, "0_input.m", matlab_code)
 
     await status_callback("init", "Pipeline Initialized", f"Session: {session_id}")
+    await status_callback("log", "SYS", f"Session created at {session_id}")
 
     try:
         # Step 1: Analyst
         await status_callback(
             "step_start", "Step 1: Analyst", "Analyzing Logic...", step_id="analyst"
         )
+
+        # 【修改】将 reference_context 注入到 LLM 请求中
         ir_md = await generate_llm_response(
-            "1_analyst.md", matlab_code=matlab_code, global_spec=global_spec_content
+            "1_analyst.md",
+            matlab_code=matlab_code,
+            global_spec=global_spec_content,
+            reference_context=reference_content,  # <--- 这里是注入点
         )
+
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
         await status_callback("result_ir", "", ir_md)
@@ -337,6 +370,7 @@ async def run_pipeline(matlab_code: str, status_callback):
             step_id="analyst",
             is_success=True,
         )
+        await status_callback("log", "INFO", "Analyst report generated.")
 
         # Step 2: RAG
         await status_callback(
@@ -359,6 +393,7 @@ async def run_pipeline(matlab_code: str, status_callback):
         rag_json = extract_json(rag_str)
         selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
 
+        # ... (规则匹配逻辑) ...
         def _bug_no_from_id(s: str):
             m = re.search(r"\bbug\b\s*#\s*(\d+)", str(s), flags=re.I)
             return int(m.group(1)) if m else None
@@ -389,6 +424,10 @@ async def run_pipeline(matlab_code: str, status_callback):
         matched_rules_text = "\n".join(matched_rules_list)
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_json)
+
+        await status_callback(
+            "log", "RAG", f"Selected {len(selected_bug_numbers)} specific rules."
+        )
         await status_callback(
             "step_done",
             "RAG Done",
@@ -418,14 +457,17 @@ async def run_pipeline(matlab_code: str, status_callback):
             step_id="architect",
             is_success=True,
         )
+        await status_callback("log", "ARCH", "Blueprint ready.")
 
         # Step 4-6: Tournament
-        print(f">>> [DEBUG] Starting {NUM_BRANCHES} parallel branches...")
         await status_callback(
             "step_start",
             "Step 4-6: Tournament",
             f"Racing {NUM_BRANCHES} candidates...",
             step_id="tournament",
+        )
+        await status_callback(
+            "log", "RACE", f"Starting {NUM_BRANCHES} parallel branches..."
         )
 
         tasks = []
@@ -453,6 +495,7 @@ async def run_pipeline(matlab_code: str, status_callback):
             "Selecting Best Implementation...",
             step_id="selector",
         )
+        await status_callback("log", "JUDGE", "Evaluating candidates...")
 
         candidates_data = []
         valid_candidates_exist = False
@@ -477,7 +520,9 @@ async def run_pipeline(matlab_code: str, status_callback):
         final_code = ""
 
         if not valid_candidates_exist:
-            print(">>> All branches failed.")
+            await status_callback(
+                "log", "FAIL", "All branches failed. Fallback to Br0."
+            )
             final_code = results[0]["code"]
             await status_callback(
                 "step_done",
@@ -488,8 +533,6 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         else:
             try:
-                print(">>> Asking Judge LLM...")
-
                 # 3. 发送请求
                 judge_response = await generate_llm_response(
                     "7_selector.md", candidates_list=candidates_json
@@ -499,7 +542,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                     save_artifact(run_dir, "7_judge_raw.md", judge_response)
 
                 # =========================================================
-                # 【核心修改】 极简分隔符解析 (Delimiter Parsing)
+                # 【核心逻辑】 显式分隔符解析 (Explicit Delimiter Parsing)
                 # =========================================================
                 reasoning = "Judge provided no specific reasoning."
                 final_code = ""
@@ -535,12 +578,17 @@ async def run_pipeline(matlab_code: str, status_callback):
 
                 # =========================================================
 
-                # 5. 在后端控制台打印理由
-                print("\n" + "=" * 40)
-                print("       ⚖️  JUDGE'S VERDICT  ⚖️")
-                print("=" * 40)
-                print(reasoning)
-                print("=" * 40 + "\n")
+                # 【LOG】直播裁判判决
+                await status_callback("log", "JUDGE", "Verdict Reached:")
+                for line in reasoning.split("\n"):
+                    if line.strip():
+                        # 截断过长行，防止撑爆UI
+                        disp_line = (
+                            line.strip()[:120] + "..."
+                            if len(line.strip()) > 120
+                            else line.strip()
+                        )
+                        await status_callback("log", "REASON", disp_line)
 
                 if run_dir:
                     save_artifact(run_dir, "7_judge_reasoning.txt", reasoning)
@@ -555,7 +603,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                 )
 
             except Exception as e:
-                print(f">>> Judge Failed: {e}. Fallback.")
+                await status_callback("log", "ERR", f"Judge Failed: {e}. Fallback.")
                 best_res = min(
                     [r for r in results if r["success"]],
                     key=lambda x: x["igd"],
@@ -570,5 +618,6 @@ async def run_pipeline(matlab_code: str, status_callback):
     except Exception as e:
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
+        await status_callback("log", "FATAL", str(e))
         if run_dir: save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
         await status_callback("fatal", "System Error", str(e))
