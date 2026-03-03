@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import json
 import traceback
 
-# 导入你的 engine 模块
+# Import your engine module
 from .engine import run_pipeline
 
 app = FastAPI()
@@ -24,14 +24,14 @@ def read_root():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print(">>> [WS] Client Connected")  # 连接成功日志
+    print(">>> [WS] Client Connected")  # Connection success log
 
     try:
         while True:
-            # 等待接收前端消息
+            # Wait to receive frontend message
             data = await websocket.receive_text()
 
-            # 收到消息后立即打印
+            # Print immediately upon receiving message
             print(f">>> [WS] Received Data Length: {len(data)}")
 
             try:
@@ -41,7 +41,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 print(">>> [WS Error] Invalid JSON received")
                 continue
 
-            # --- 定义健壮的回调函数 ---
+            # --- Define robust callback function ---
             async def send_update(
                 type_,
                 title,
@@ -62,28 +62,28 @@ async def websocket_endpoint(websocket: WebSocket):
                 }
 
                 try:
-                    # 检查连接状态再发送
-                    # 注意：websocket.client_state 只能粗略检查，try-except 才是最稳的
+                    # Check connection status before sending
+                    # Note: websocket.client_state only roughly checks, try-except is the most robust
                     await websocket.send_text(json.dumps(response_data))
                 except (WebSocketDisconnect, RuntimeError) as e:
-                    # 如果连接已断开，打印日志但不要抛出异常，防止打断后续清理工作
+                    # If connection is disconnected, print log but do not raise exception to avoid interrupting cleanup
                     print(
                         f">>> [WS Warning] Connection closed, failed to send update: {title}"
                     )
-                    # 这里可以选择抛出一个自定义异常来停止 pipeline，或者默默忽略
-                    # 为了防止 pipeline 继续跑空车，我们这里选择静默忽略，让外层循环处理
+                    # You can choose to raise a custom exception here to stop pipeline, or ignore silently
+                    # To prevent pipeline from running empty, we choose to silently ignore and let outer loop handle
                     pass
                 except Exception as e:
                     print(f">>> [WS Send Error] {str(e)}")
 
-            # --- 执行核心 Pipeline ---
+            # --- Execute core Pipeline ---
             if matlab_code:
                 print(">>> [DEBUG] Starting run_pipeline...")
                 try:
                     await run_pipeline(matlab_code, send_update)
                 except (WebSocketDisconnect, RuntimeError):
                     print(">>> [WS] Pipeline stopped due to disconnection.")
-                    break  # 退出 while 循环
+                    break  # Exit while loop
             else:
                 print(">>> [WS Warning] Received empty code.")
                 await send_update("log", "Warning", "Code is empty.")
@@ -91,6 +91,6 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         print(">>> [WS] Client Disconnected (Normal Close)")
     except Exception as e:
-        # 只捕获真正的意外错误
+        # Only catch genuine unexpected errors
         print(">>> [WS Fatal Error]")
         traceback.print_exc()

@@ -15,7 +15,7 @@ from .executor import (
     cleanup_workspace,
 )
 
-# --- 路径配置 ---
+# --- Path configuration ---
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
@@ -23,20 +23,20 @@ HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
 PROMPTS_DIR = os.path.join(BACKEND_DIR, "prompts")
 DATABASE_DIR = os.path.join(BACKEND_DIR, "database")
 
-# 规则库路径
+# Rule database path
 RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
-# 全局规范路径
+# Global specification path
 GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
 
-# 并行分支数量
+# Number of parallel branches
 NUM_BRANCHES = 5
 
 
-# --- 数据加载辅助函数 ---
+# --- Data loading helper functions ---
 
 
 def load_rag_db():
-    """从 JSON 文件加载 RAG 规则库"""
+    """Load RAG rule database from JSON file"""
     if not os.path.exists(RULES_DB_PATH):
         return []
     try:
@@ -50,7 +50,7 @@ def load_rag_db():
 
 
 def load_global_spec():
-    """从 Markdown 文件加载全局规范"""
+    """Load global specification from Markdown file"""
     if os.path.exists(GLOBAL_SPEC_PATH):
         try:
             with open(GLOBAL_SPEC_PATH, "r", encoding="utf-8") as f:
@@ -61,7 +61,7 @@ def load_global_spec():
 
 
 def load_resource(filename):
-    """加载资源文件 (SDK, Examples, Reference Context)"""
+    """Load resource files (SDK, Examples, Reference Context)"""
     path = os.path.join(PROMPTS_DIR, filename)
     if os.path.exists(path):
         try:
@@ -72,11 +72,11 @@ def load_resource(filename):
     return ""
 
 
-# --- 通用辅助函数 ---
+# --- General helper functions ---
 
 
 def ensure_history_dir():
-    """确保 history 目录存在，并返回当前运行的独立时间戳目录"""
+    """Ensure history directory exists, and return independent timestamp directory for current run"""
     if not os.path.exists(HISTORY_DIR):
         os.makedirs(HISTORY_DIR)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -86,7 +86,7 @@ def ensure_history_dir():
 
 
 def save_artifact(run_dir, filename, content):
-    """保存中间产物"""
+    """Save intermediate artifacts"""
     path = os.path.join(run_dir, filename)
     try:
         with open(path, "w", encoding="utf-8") as f:
@@ -99,7 +99,7 @@ def save_artifact(run_dir, filename, content):
 
 
 def extract_json(text):
-    """仅用于 RAG Step 解析 JSON"""
+    """Only used for RAG Step JSON parsing"""
     try:
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0]
@@ -110,7 +110,7 @@ def extract_json(text):
         return {}
 
 
-# --- 核心逻辑：单分支生命周期 ---
+# --- Core logic: single branch lifecycle ---
 
 
 async def run_single_branch_lifecycle(
@@ -125,15 +125,15 @@ async def run_single_branch_lifecycle(
     status_callback,
 ):
     """
-    独立运行一个代码生成分支：Coder -> Static Fix -> Runtime Fix
+    Independently run a code generation branch: Coder -> Static Fix -> Runtime Fix
     """
     branch_id = f"br{branch_idx}"
     session_id = os.path.join(base_session_id, branch_id)
 
-    # 日志标签
+    # Log label
     L_TAG = f"Branch {branch_idx}"
 
-    # 策略注入：5种不同的张量化流派
+    # Strategy injection: 5 different tensorization schools
     strategies_short = [
         "BROADCASTING (No Loops)",
         "EINSUM OPTIMIZATION",
@@ -155,7 +155,7 @@ async def run_single_branch_lifecycle(
     temp_offset = 0.08 * branch_idx
     current_temp = 0.6 + temp_offset
 
-    # 【LOG】分支启动
+    # [LOG] Branch start
     await status_callback(
         "log", L_TAG, f"Start | Strat: {current_strategy_short} | T={current_temp:.2f}"
     )
@@ -251,7 +251,7 @@ async def run_single_branch_lifecycle(
                     best_igd_in_branch = report["last_igd"]
                     best_history = report["igd_history"]
 
-                    # 【LOG】成功日志 (PERF 颜色)
+                    # [LOG] Success log (PERF color)
                     await status_callback(
                         "log",
                         "PERF",
@@ -276,7 +276,7 @@ async def run_single_branch_lifecycle(
                 elif not report["success"] and not err_summary:
                     err_summary = f"Runtime Error: Execution failed. output: {report['stdout'][-200:]}"
 
-                # 【LOG】失败简报
+                # [LOG] Failure brief
                 short_err = err_summary.split("\n")[-1][:60]
                 await status_callback("log", "ERR", f"[{L_TAG}] Fix... ({short_err})")
 
@@ -318,21 +318,21 @@ async def run_single_branch_lifecycle(
         }
 
 
-# --- 主流程 Pipeline ---
+# --- Main process Pipeline ---
 
 
 async def run_pipeline(matlab_code: str, status_callback):
-    # 0. 加载资源
+    # 0. Load resources
     rag_db = load_rag_db()
     global_spec_content = load_global_spec()
     asset_lib_content = load_resource("resources_assets.md")
     few_shot_content = load_resource("resources_examples.md")
 
-    # 【新增】加载 PlatEMO 参考背景文档
-    # 这对应了我们刚才创建的 reference_platemo.md
+    # [New] Load PlatEMO reference background document
+    # This corresponds to the reference_platemo.md we just created
     reference_content = load_resource("reference_platemo.md")
 
-    # 1. 初始化
+    # 1. Initialization
     try:
         run_dir = ensure_history_dir()
     except Exception:
@@ -352,12 +352,12 @@ async def run_pipeline(matlab_code: str, status_callback):
             "step_start", "Step 1: Analyst", "Analyzing Logic...", step_id="analyst"
         )
 
-        # 【修改】将 reference_context 注入到 LLM 请求中
+        # [Modify] Inject reference_context into LLM request
         ir_md = await generate_llm_response(
             "1_analyst.md",
             matlab_code=matlab_code,
             global_spec=global_spec_content,
-            reference_context=reference_content,  # <--- 这里是注入点
+            reference_context=reference_content,  # <--- Here is the injection point
         )
 
         if run_dir:
@@ -393,7 +393,7 @@ async def run_pipeline(matlab_code: str, status_callback):
         rag_json = extract_json(rag_str)
         selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
 
-        # ... (规则匹配逻辑) ...
+        # ... (Rule matching logic) ...
         def _bug_no_from_id(s: str):
             m = re.search(r"\bbug\b\s*#\s*(\d+)", str(s), flags=re.I)
             return int(m.group(1)) if m else None
@@ -533,7 +533,7 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         else:
             try:
-                # 3. 发送请求
+                # 3. Send request
                 judge_response = await generate_llm_response(
                     "7_selector.md", candidates_list=candidates_json
                 )
@@ -542,12 +542,12 @@ async def run_pipeline(matlab_code: str, status_callback):
                     save_artifact(run_dir, "7_judge_raw.md", judge_response)
 
                 # =========================================================
-                # 【核心逻辑】 显式分隔符解析 (Explicit Delimiter Parsing)
+                # [Core Logic] Explicit Delimiter Parsing
                 # =========================================================
                 reasoning = "Judge provided no specific reasoning."
                 final_code = ""
 
-                # 1. 提取代码 (Code)
+                # 1. Extract code
                 if (
                     "[JUDGE_CODE_START]" in judge_response
                     and "[JUDGE_CODE_END]" in judge_response
@@ -558,14 +558,14 @@ async def run_pipeline(matlab_code: str, status_callback):
                         .strip()
                     )
                 else:
-                    # 兜底：假设全是代码
+                    # Fallback: Assume all is code
                     final_code = (
                         judge_response.replace("```python", "")
                         .replace("```", "")
                         .strip()
                     )
 
-                # 2. 提取理由 (Reasoning)
+                # 2. Extract reasoning
                 if (
                     "[JUDGE_REASONING_START]" in judge_response
                     and "[JUDGE_REASONING_END]" in judge_response
@@ -578,11 +578,11 @@ async def run_pipeline(matlab_code: str, status_callback):
 
                 # =========================================================
 
-                # 【LOG】直播裁判判决
+                # [LOG] Live judge verdict
                 await status_callback("log", "JUDGE", "Verdict Reached:")
                 for line in reasoning.split("\n"):
                     if line.strip():
-                        # 截断过长行，防止撑爆UI
+                        # Truncate overly long lines to prevent UI overflow
                         disp_line = (
                             line.strip()[:120] + "..."
                             if len(line.strip()) > 120

@@ -7,9 +7,9 @@ import re
 import math
 import time
 
-# --- 配置部分 ---
+# --- Configuration section ---
 
-# Ruff 忽略规则配置
+# Ruff ignore rule configuration
 IGNORE_RUFF_CODES = [
     "E501",
     "E402",
@@ -22,7 +22,7 @@ IGNORE_RUFF_CODES = [
     "I",
 ]
 
-# --- 路径配置 ---
+# --- Path configuration ---
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 BASE_WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "temp_workspace")
@@ -32,7 +32,7 @@ if not os.path.exists(BASE_WORKSPACE_DIR):
 
 
 def setup_workspace(session_id: str) -> str:
-    """创建隔离的工作目录"""
+    """Create isolated workspace directory"""
     workspace_path = os.path.join(BASE_WORKSPACE_DIR, session_id)
     os.makedirs(workspace_path, exist_ok=True)
     return workspace_path
@@ -40,14 +40,14 @@ def setup_workspace(session_id: str) -> str:
 
 def cleanup_workspace(session_id: str):
     """
-    清理工作目录
-    【修改】现在改为保留文件以便调试
+    Clean up workspace directory
+    [Modified] Now keeps files for debugging
     """
     workspace_path = os.path.join(BASE_WORKSPACE_DIR, session_id)
     if os.path.exists(workspace_path):
         try:
             # -------------------------------------------------------
-            # [DEBUG MODE] 注释掉删除逻辑，保留所有中间文件
+            # [DEBUG MODE] Commented out deletion logic, keep all intermediate files
             # -------------------------------------------------------
             # shutil.rmtree(workspace_path)
 
@@ -57,7 +57,7 @@ def cleanup_workspace(session_id: str):
 
 
 def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str]:
-    """使用 Ruff 进行静态代码分析"""
+    """Use Ruff for static code analysis"""
     is_temp_session = False
     if not session_id:
         session_id = f"check_{str(uuid.uuid4())[:8]}"
@@ -113,8 +113,8 @@ def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str
 
 def execute_code(code_str: str, session_id: str = None, filename="algo_script.py"):
     """
-    基础执行函数：运行代码并返回输出
-    【修改】强制使用 CPU 运行以防止并行死机
+    Base execution function: run code and return output
+    [Modified] Force CPU execution to prevent parallel freeze
     """
     if not session_id:
         session_id = f"exec_{str(uuid.uuid4())[:8]}"
@@ -128,10 +128,10 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
     except Exception as e:
         return False, "", f"System Error: Failed to write file - {str(e)}"
 
-    # === [关键修改] 强制 CPU 模式 ===
+    # === [Key modification] Force CPU mode ===
     # env = os.environ.copy()
-    # env["CUDA_VISIBLE_DEVICES"] = ""  # 隐藏 GPU，PyTorch 回退到 CPU
-    # env["OMP_NUM_THREADS"] = "1"  # 限制 CPU 线程数，防止 100% 占用
+    # env["CUDA_VISIBLE_DEVICES"] = ""  # Hide GPU, PyTorch fallback to CPU
+    # env["OMP_NUM_THREADS"] = "1"  # Limit CPU threads to prevent 100% usage
     # env["MKL_NUM_THREADS"] = "1"
     # ==============================
 
@@ -140,7 +140,7 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
             [sys.executable, filename],
             capture_output=True,
             text=True,
-            timeout=30,  # 30秒超时
+            timeout=30,  # 30 seconds timeout
             cwd=workspace,
         )
 
@@ -156,7 +156,7 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
 
 
 def parse_igd_from_stdout(stdout: str) -> list[float]:
-    """从标准输出中提取 IGD 值"""
+    """Extract IGD values from standard output"""
     igds = []
     matches = re.findall(r"IGD:\s*([+-]?([0-9]*[.])?[0-9]+|nan)", stdout, re.IGNORECASE)
     for m in matches:
@@ -175,7 +175,7 @@ def parse_igd_from_stdout(stdout: str) -> list[float]:
 def execute_code_trial(
     code_str: str, session_id: str, filename="algo_script.py"
 ) -> dict:
-    """高级试跑函数：执行代码并分析收敛性指标"""
+    """Advanced trial run function: execute code and analyze convergence metrics"""
     start_time = time.time()
     success, output, error = execute_code(code_str, session_id, filename)
     duration = time.time() - start_time

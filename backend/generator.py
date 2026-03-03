@@ -8,7 +8,7 @@ load_dotenv()
 # 2. Configuration
 API_KEY = os.getenv("OPENAI_API_KEY")
 BASE_URL = os.getenv("OPENAI_BASE_URL")
-# 默认模型配置
+# Default model configuration
 MODEL_NAME = os.getenv("OPENAI_MODEL")
 # MODEL_NAME = os.getenv("OPENAI_MODEL", "gemini-2.0-flash-exp")
 TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
@@ -32,9 +32,9 @@ def _load_prompt(filename, **kwargs):
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # 替换 Prompt 中的占位符 {key}
+    # Replace placeholders {key} in Prompt
     for key, value in kwargs.items():
-        # 将 value 转为 string，处理可能的 None
+        # Convert value to string, handle possible None
         val_str = str(value) if value is not None else ""
         content = content.replace(f"{{{key}}}", val_str)
 
@@ -66,19 +66,19 @@ async def generate_llm_response(prompt_filename: str, **kwargs):
         # C. Clean Response
         content = response.choices[0].message.content
 
-        # 【Step 6 专用】移除 <analysis> 标签及其内容，只保留后面的代码
+        # [Step 6 Exclusive] Remove <analysis> tags and their content, keep only the subsequent code
         if "<analysis>" in content:
-            # 找到 </analysis> 标签的位置，取其后面的内容
+            # Find the position of </analysis> tag, take the content after it
             content = content.split("</analysis>")[-1].strip()
 
-        # 移除可能存在的 Markdown 代码块标记，只保留内容
+        # Remove any Markdown code block markers, keep only the content
         if "```markdown" in content:
             content = content.replace("```markdown", "").replace("```", "").strip()
         elif "```json" in content:
             content = content.replace("```json", "").replace("```", "").strip()
         elif "```python" in content:
             content = content.replace("```python", "").replace("```", "").strip()
-        # 处理裸写的 ```
+        # Handle bare ```
         elif "```" in content:
             content = content.replace("```", "").strip()
 
