@@ -3,8 +3,6 @@
 EvoCoder is a lightweight local application with a **FastAPI backend** and a **browser-based frontend**.
 The backend provides API services, while the frontend interacts with it through a simple web interface.
 
----
-
 ## Running the Backend
 
 Start the backend server from the project root directory:
@@ -25,8 +23,6 @@ After starting successfully, the backend API will be available at:
 ```
 http://localhost:8000
 ```
-
----
 
 ## Opening the Frontend
 
@@ -53,8 +49,6 @@ The frontend will automatically communicate with the backend running at:
 ```
 http://localhost:8000
 ```
-
----
 
 
 ## Notes
