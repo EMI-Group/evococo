@@ -1,7 +1,6 @@
 import os
 import subprocess
 import sys
-import shutil
 import uuid
 import re
 import math
@@ -167,7 +166,7 @@ def parse_igd_from_stdout(stdout: str) -> list[float]:
             else:
                 val = float(val_str)
             igds.append(val)
-        except:
+        except:  # noqa: E722
             continue
     return igds
 
