@@ -4,12 +4,10 @@ import traceback
 import os
 import datetime
 import uuid
-import time
 import re
 
 from .generator import generate_llm_response
 from .executor import (
-    execute_code,
     execute_code_trial,
     check_syntax_with_ruff,
     cleanup_workspace,
@@ -45,7 +43,7 @@ def load_rag_db():
         if isinstance(data, dict) and "rules" in data:
             return data["rules"]
         return data if isinstance(data, list) else []
-    except:
+    except:  # noqa: E722
         return []
 
 
@@ -55,7 +53,7 @@ def load_global_spec():
         try:
             with open(GLOBAL_SPEC_PATH, "r", encoding="utf-8") as f:
                 return f.read()
-        except:
+        except:  # noqa: E722
             pass
     return ""
 
@@ -67,7 +65,7 @@ def load_resource(filename):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return f.read()
-        except:
+        except:  # noqa: E722
             pass
     return ""
 
@@ -94,7 +92,7 @@ def save_artifact(run_dir, filename, content):
                 f.write(json.dumps(content, indent=2, ensure_ascii=False))
             else:
                 f.write(str(content))
-    except:
+    except:  # noqa: E722
         pass
 
 
@@ -106,7 +104,7 @@ def extract_json(text):
         elif "```" in text:
             text = text.split("```")[0]
         return json.loads(text.strip())
-    except:
+    except:  # noqa: E722
         return {}
 
 
@@ -612,12 +610,20 @@ async def run_pipeline(matlab_code: str, status_callback):
                 final_code = best_res["code"]
 
         await status_callback("result_code", "Final Optimized Code", final_code)
-        if run_dir: save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)
-        await status_callback("step_done", "Success", "Pipeline Complete!", step_id="finish", is_success=True)
+        if run_dir:
+            save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)  # noqa: E701
+        await status_callback(
+            "step_done",
+            "Success",
+            "Pipeline Complete!",
+            step_id="finish",
+            is_success=True,
+        )
 
     except Exception as e:
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
         await status_callback("log", "FATAL", str(e))
-        if run_dir: save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
+        if run_dir:
+            save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())  # noqa: E701
         await status_callback("fatal", "System Error", str(e))

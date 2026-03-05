@@ -65,7 +65,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Check connection status before sending
                     # Note: websocket.client_state only roughly checks, try-except is the most robust
                     await websocket.send_text(json.dumps(response_data))
-                except (WebSocketDisconnect, RuntimeError) as e:
+                except (WebSocketDisconnect, RuntimeError) as e:  # noqa: F841
                     # If connection is disconnected, print log but do not raise exception to avoid interrupting cleanup
                     print(
                         f">>> [WS Warning] Connection closed, failed to send update: {title}"
@@ -90,7 +90,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         print(">>> [WS] Client Disconnected (Normal Close)")
-    except Exception as e:
+    except Exception as e:  # noqa: F841
         # Only catch genuine unexpected errors
         print(">>> [WS Fatal Error]")
         traceback.print_exc()
