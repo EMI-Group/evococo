@@ -15,21 +15,16 @@ from .executor import (
     cleanup_old_workspaces,
 )
 
-# --- Path configuration ---
-
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
-HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
-PROMPTS_DIR = os.path.join(BACKEND_DIR, "prompts")
-DATABASE_DIR = os.path.join(BACKEND_DIR, "database")
-
-# Rule database path
-RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
-# Global specification path
-GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
-
-# Number of parallel branches
-NUM_BRANCHES = 5
+from .config import (
+    NUM_BRANCHES,
+    STRATEGIES_SHORT,
+    STRATEGIES_FULL,
+    RULES_DB_PATH,
+    GLOBAL_SPEC_PATH,
+    HISTORY_DIR,
+    PROMPTS_DIR,
+    MAX_RETAINED_WORKSPACES,
+)
 
 
 # --- Data loading helper functions ---
@@ -84,7 +79,7 @@ def ensure_history_dir():
     os.makedirs(run_dir)
 
     # Trigger global history cleanup
-    cleanup_old_workspaces(HISTORY_DIR, max_retained=50)
+    cleanup_old_workspaces(HISTORY_DIR, max_retained=MAX_RETAINED_WORKSPACES)
 
     return run_dir
 
@@ -155,23 +150,8 @@ async def run_single_branch_lifecycle(
     L_TAG = f"Branch {branch_idx}"
 
     # Strategy injection: 5 different tensorization schools
-    strategies_short = [
-        "BROADCASTING (No Loops)",
-        "EINSUM OPTIMIZATION",
-        "MASKED OPS (No If/Else)",
-        "IN-PLACE EFFICIENCY",
-        "ADVANCED OPS (cdist)",
-    ]
-    strategies_full = [
-        "STRATEGY: BROADCASTING EXPERT. Use standard PyTorch broadcasting (unsqueeze, expand) for all matrix operations. Strictly NO for-loops.",
-        "STRATEGY: EINSUM OPTIMIZATION. Use `torch.einsum` for all matrix multiplications and dimension reductions. It is cleaner and faster.",
-        "STRATEGY: MASKED OPERATIONS. Avoid `if/else` logic. Use `torch.where`, `torch.masked_fill` to handle conditional logic on tensors.",
-        "STRATEGY: IN-PLACE EFFICIENCY. Minimize memory overhead. Use in-place operations (`add_`, `mul_`) where possible.",
-        "STRATEGY: ADVANCED OPS. Use high-level PyTorch functions like `torch.cdist`, `torch.linalg.norm` instead of manual formulas.",
-    ]
-
-    current_strategy_short = strategies_short[branch_idx % len(strategies_short)]
-    current_strategy_full = strategies_full[branch_idx % len(strategies_full)]
+    current_strategy_short = STRATEGIES_SHORT[branch_idx % len(STRATEGIES_SHORT)]
+    current_strategy_full = STRATEGIES_FULL[branch_idx % len(STRATEGIES_FULL)]
 
     temp_offset = 0.08 * branch_idx
     current_temp = 0.6 + temp_offset

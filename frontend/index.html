@@ -783,10 +783,22 @@ end`;
             if (desc) el.querySelector('.step-desc').textContent = desc;
         }
 
+        const MAX_LOG_LINES = 300;
         function log(msg, cls = "") {
             const box = document.getElementById('terminal-content');
             const time = new Date().toLocaleTimeString('en-US', { hour12: false });
-            box.innerHTML += `<div class="flex gap-4 py-2 border-b border-transparent group hover:bg-black/5 dark:hover:bg-white/5 transition-colors"><span class="opacity-15 select-none tracking-tighter font-black text-[10px]">[${time}]</span><span class="${cls}">${msg}</span></div>`;
+
+            const div = document.createElement('div');
+            div.className = "flex gap-4 py-2 border-b border-transparent group hover:bg-black/5 dark:hover:bg-white/5 transition-colors";
+            div.innerHTML = `<span class="opacity-15 select-none tracking-tighter font-black text-[10px]">[${time}]</span><span class="${cls}">${msg}</span>`;
+
+            box.appendChild(div);
+
+            // Limit log lines to reduce browser DOM freezing
+            while (box.children.length > MAX_LOG_LINES) {
+                box.removeChild(box.firstChild);
+            }
+
             scrollToBottom('terminal-content');
         }
 

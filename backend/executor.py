@@ -7,25 +7,11 @@ import math
 import time
 import shutil
 
-# --- Configuration section ---
-
-# Ruff ignore rule configuration
-IGNORE_RUFF_CODES = [
-    "E501",
-    "E402",
-    "E722",
-    "E731",
-    "E741",
-    "E701",
-    "E702",
-    "E703",
-    "I",
-]
-
-# --- Path configuration ---
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
-BASE_WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "temp_workspace")
+from .config import (
+    IGNORE_RUFF_CODES,
+    BASE_WORKSPACE_DIR,
+    MAX_RETAINED_WORKSPACES,
+)
 
 if not os.path.exists(BASE_WORKSPACE_DIR):
     os.makedirs(BASE_WORKSPACE_DIR)
@@ -49,12 +35,14 @@ def cleanup_workspace(session_id: str):
             print(f">>> [DEBUG] Workspace kept at: {workspace_path}")
 
             # Global cleanup: to avoid filling up the disk
-            cleanup_old_workspaces(BASE_WORKSPACE_DIR, max_retained=50)
+            cleanup_old_workspaces(
+                BASE_WORKSPACE_DIR, max_retained=MAX_RETAINED_WORKSPACES
+            )
         except Exception as e:
             print(f"Error cleaning up workspace {session_id}: {e}")
 
 
-def cleanup_old_workspaces(base_dir: str, max_retained: int = 50):
+def cleanup_old_workspaces(base_dir: str, max_retained: int = MAX_RETAINED_WORKSPACES):
     """Keep only the 'max_retained' most recent directories in base_dir"""
     try:
         if not os.path.exists(base_dir):
