@@ -5,7 +5,7 @@ Global Configuration for EvoCoder
 import os
 
 # --- Tournament Engine Settings ---
-NUM_BRANCHES = 5
+NUM_BRANCHES = 6
 
 # Tensorization strategies to inject for each branch
 STRATEGIES_SHORT = [
@@ -14,6 +14,7 @@ STRATEGIES_SHORT = [
     "MASKED OPS (No If/Else)",
     "IN-PLACE EFFICIENCY",
     "ADVANCED OPS (cdist)",
+    "JIT-COMPLIANT PEELING",
 ]
 
 STRATEGIES_FULL = [
@@ -22,6 +23,7 @@ STRATEGIES_FULL = [
     "STRATEGY: MASKED OPERATIONS. Avoid `if/else` logic. Use `torch.where`, `torch.masked_fill` to handle conditional logic on tensors.",
     "STRATEGY: IN-PLACE EFFICIENCY. Minimize memory overhead. Use in-place operations (`add_`, `mul_`) where possible.",
     "STRATEGY: ADVANCED OPS. Use high-level PyTorch functions like `torch.cdist`, `torch.linalg.norm` instead of manual formulas.",
+    "STRATEGY: JIT-COMPLIANT PEELING. Strictly avoid CPU-GPU sync. NO `.item()` or `.tolist()`. Pre-allocate fixed-size tensor buffers (e.g. `torch.empty`) and use tensor slice indexing `buffer[offset:offset+N] = ...` instead of Python dynamically growing `lists`.",
 ]
 
 # --- Static Checker (Ruff) Settings ---

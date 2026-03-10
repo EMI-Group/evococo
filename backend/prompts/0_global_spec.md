@@ -29,6 +29,8 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 ## 4. Forbidden Patterns
 * **NO** `numpy` (unless absolutely necessary). Use `torch`.
 * **NO** Python `for` loops for calculating distances or checking dominance. Use `torch` broadcasting.
+* **NO** `list.append` or `.tolist()`. Pre-allocate fixed tensors and slice `.empty()` blocks.
+* **NO** `.item()` for condition checks in loops (Causes GPU-CPU sync blocking). 
 * **NO** Iterative Selection: Do not write logic like "put front 1, then front 2, then...".
   * **Correct Pattern**:
     1. Calculate metrics (Rank, Density) for the *entire* merged population.
