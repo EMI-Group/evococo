@@ -37,16 +37,11 @@ You will receive a JSON list of candidates. Each candidate contains:
 
 ## Output Format (EXTREMELY STRICT)
 
-You must output your response using the following **Exact Delimiters**. Do not use Markdown code blocks (\`\`\`) for the code section.
+You MUST output your response as a valid JSON object. Do not include markdown formatting or backticks around the JSON. Your output must exactly match the following JSON schema format:
 
-[JUDGE_REASONING_START]
-Here, write your detailed analysis.
-1. Start with "## Judge's Verdict".
-2. **Explicitly Compare** the top candidates (e.g., "Branch 0 (IGD 0.05) vs Branch 2 (IGD 0.06)").
-3. Explain why you might have sacrificed a bit of IGD for better Tensorization (e.g., "Although Branch 0 was slightly better in metric, Branch 2 is fully vectorized and strictly follows the 'No Loops' policy, making it the superior engineering solution.").
-[JUDGE_REASONING_END]
-
-[JUDGE_CODE_START]
-Put the FULL, UNMODIFIED Python code here.
-Just the raw code text. No markdown backticks.
-[JUDGE_CODE_END]
+```json
+{
+  "reasoning": "Detailed analysis. Start with '## Judge's Verdict'. Explicitly compare the top candidates (e.g., 'Branch 0 vs Branch 2'). Explain why you might sacrifice a bit of IGD for better Tensorization if applicable.",
+  "code": "The FULL, UNMODIFIED Python code of the winning branch. Just the raw code text, no markdown backticks inside."
+}
+```

@@ -1,6 +1,9 @@
 import os
+import json
+import re
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 # 1. Load environment variables
 load_dotenv()
@@ -41,12 +44,15 @@ def _load_prompt(filename, **kwargs):
     return content
 
 
-async def generate_llm_response(prompt_filename: str, **kwargs):
+async def generate_llm_response(
+    prompt_filename: str, response_model: type[BaseModel] = None, **kwargs
+):
     """
     Generates text response via the OpenAI-compatible API.
 
     Args:
         prompt_filename (str): Filename in the prompts/ directory (e.g., "1_analyst.md")
+        response_model (type[BaseModel], optional): Pydantic model to enforce and parse structured output.
         **kwargs: Variables to inject into the prompt (e.g., matlab_code, analyst_report)
     """
     try:
@@ -56,31 +62,44 @@ async def generate_llm_response(prompt_filename: str, **kwargs):
         # B. Call API
         # print(f">>> [DEBUG] Sending prompt: {prompt_filename} (Length: {len(prompt_content)})")
 
+        kwargs_api = {}
+        if response_model:
+            # We enforce JSON object returned to assist Pydantic structure mapping
+            kwargs_api["response_format"] = {"type": "json_object"}
+
         response = await client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt_content}],
             temperature=TEMPERATURE,
             stream=False,
+            **kwargs_api,
         )
 
         # C. Clean Response
         content = response.choices[0].message.content
 
-        # [Step 6 Exclusive] Remove <analysis> tags and their content, keep only the subsequent code
+        # Pydantic Structured Output Mode
+        if response_model:
+            # Find JSON payload robustly handling stray markdown wrap
+            match = re.search(r"(\{.*\})", content, re.DOTALL)
+            json_str = match.group(1) if match else content
+            try:
+                data = json.loads(json_str)
+                return response_model(**data)
+            except Exception as e:
+                print(f">>> [ERROR] Failed to parse JSON to Pydantic: {e}")
+                raise
+
+        # [Default Mode] Remove <analysis> tags and their content, keep only the subsequent code
         if "<analysis>" in content:
             # Find the position of </analysis> tag, take the content after it
             content = content.split("</analysis>")[-1].strip()
 
         # Remove any Markdown code block markers, keep only the content
-        if "```markdown" in content:
-            content = content.replace("```markdown", "").replace("```", "").strip()
-        elif "```json" in content:
-            content = content.replace("```json", "").replace("```", "").strip()
-        elif "```python" in content:
-            content = content.replace("```python", "").replace("```", "").strip()
-        # Handle bare ```
-        elif "```" in content:
-            content = content.replace("```", "").strip()
+        # Note: Added robust regex stripping for clean code/text extraction
+        content = re.sub(r"^```[a-zA-Z]*\s*\n", "", content)
+        content = re.sub(r"\n```\s*$", "", content)
+        content = content.replace("```", "").strip()
 
         return content
 

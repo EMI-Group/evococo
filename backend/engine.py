@@ -5,12 +5,14 @@ import os
 import datetime
 import uuid
 import re
+from pydantic import BaseModel, Field
 
 from .generator import generate_llm_response
 from .executor import (
     execute_code_trial,
     check_syntax_with_ruff,
     cleanup_workspace,
+    cleanup_old_workspaces,
 )
 
 # --- Path configuration ---
@@ -80,6 +82,10 @@ def ensure_history_dir():
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = os.path.join(HISTORY_DIR, timestamp)
     os.makedirs(run_dir)
+
+    # Trigger global history cleanup
+    cleanup_old_workspaces(HISTORY_DIR, max_retained=50)
+
     return run_dir
 
 
@@ -97,7 +103,7 @@ def save_artifact(run_dir, filename, content):
 
 
 def extract_json(text):
-    """Only used for RAG Step JSON parsing"""
+    """Only used for RAG Step JSON parsing (legacy compatibility fallback)"""
     try:
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0]
@@ -106,6 +112,23 @@ def extract_json(text):
         return json.loads(text.strip())
     except:  # noqa: E722
         return {}
+
+
+class JudgeResult(BaseModel):
+    """Pydantic model describing the structured extraction for the final Judge output."""
+
+    reasoning: str = Field(description="Detailed analysis of all branches.")
+    code: str = Field(
+        description="The FULL, UNMODIFIED Python code of the winning branch, no markdown ticks."
+    )
+
+
+class RagResult(BaseModel):
+    """Pydantic model describing the structured extraction for the RAG step."""
+
+    selected_bug_numbers: list[int] = Field(
+        description="A list of bug integers extracted from the rules."
+    )
 
 
 # --- Core logic: single branch lifecycle ---
@@ -191,7 +214,7 @@ async def run_single_branch_lifecycle(
         # =================================================
         MAX_STATIC_RETRIES = 2
         for i in range(MAX_STATIC_RETRIES + 1):
-            is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
+            is_valid, error_msg = await check_syntax_with_ruff(current_code, session_id)
 
             if is_valid:
                 await status_callback("log", L_TAG, "Static Check: PASSED.")
@@ -232,7 +255,7 @@ async def run_single_branch_lifecycle(
                 "log", L_TAG, f"Runtime Attempt {attempt + 1} executing..."
             )
 
-            report = execute_code_trial(current_code, session_id)
+            report = await execute_code_trial(current_code, session_id)
 
             if run_dir:
                 save_artifact(
@@ -385,11 +408,13 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         all_rules_desc = "\n---\n".join(rules_context_list)
 
-        rag_str = await generate_llm_response(
-            "2_rag_selector.md", rules_context=all_rules_desc, analyst_report=ir_md
+        rag_result = await generate_llm_response(
+            "2_rag_selector.md",
+            response_model=RagResult,
+            rules_context=all_rules_desc,
+            analyst_report=ir_md,
         )
-        rag_json = extract_json(rag_str)
-        selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
+        selected_bug_numbers = rag_result.selected_bug_numbers
 
         # ... (Rule matching logic) ...
         def _bug_no_from_id(s: str):
@@ -421,7 +446,7 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         matched_rules_text = "\n".join(matched_rules_list)
         if run_dir:
-            save_artifact(run_dir, "2_rag_selection.json", rag_json)
+            save_artifact(run_dir, "2_rag_selection.json", rag_result.model_dump())
 
         await status_callback(
             "log", "RAG", f"Selected {len(selected_bug_numbers)} specific rules."
@@ -531,49 +556,23 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         else:
             try:
-                # 3. Send request
-                judge_response = await generate_llm_response(
-                    "7_selector.md", candidates_list=candidates_json
+                # 3. Send request strictly expecting JudgeResult JSON
+                judge_result = await generate_llm_response(
+                    "7_selector.md",
+                    response_model=JudgeResult,
+                    candidates_list=candidates_json,
                 )
 
                 if run_dir:
-                    save_artifact(run_dir, "7_judge_raw.md", judge_response)
+                    save_artifact(
+                        run_dir, "7_judge_raw.json", judge_result.model_dump()
+                    )
 
                 # =========================================================
-                # [Core Logic] Explicit Delimiter Parsing
+                # [Core Logic] Clean Extractions
                 # =========================================================
-                reasoning = "Judge provided no specific reasoning."
-                final_code = ""
-
-                # 1. Extract code
-                if (
-                    "[JUDGE_CODE_START]" in judge_response
-                    and "[JUDGE_CODE_END]" in judge_response
-                ):
-                    final_code = (
-                        judge_response.split("[JUDGE_CODE_START]")[1]
-                        .split("[JUDGE_CODE_END]")[0]
-                        .strip()
-                    )
-                else:
-                    # Fallback: Assume all is code
-                    final_code = (
-                        judge_response.replace("```python", "")
-                        .replace("```", "")
-                        .strip()
-                    )
-
-                # 2. Extract reasoning
-                if (
-                    "[JUDGE_REASONING_START]" in judge_response
-                    and "[JUDGE_REASONING_END]" in judge_response
-                ):
-                    reasoning = (
-                        judge_response.split("[JUDGE_REASONING_START]")[1]
-                        .split("[JUDGE_REASONING_END]")[0]
-                        .strip()
-                    )
-
+                reasoning = judge_result.reasoning
+                final_code = judge_result.code
                 # =========================================================
 
                 # [LOG] Live judge verdict
