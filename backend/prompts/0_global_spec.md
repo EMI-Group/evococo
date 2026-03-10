@@ -26,13 +26,23 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
     * Perform one iteration (mating -> mutation -> selection).
     * Update `self.pop` and `self.fit` **in-place**.
 
-## 4. Forbidden Patterns
-* **NO** `numpy` (unless absolutely necessary). Use `torch`.
-* **NO** Python `for` loops for calculating distances or checking dominance. Use `torch` broadcasting.
-* **NO** `list.append` or `.tolist()`. Pre-allocate fixed tensors and slice `.empty()` blocks.
-* **NO** `.item()` for condition checks in loops (Causes GPU-CPU sync blocking). 
-* **NO** Iterative Selection: Do not write logic like "put front 1, then front 2, then...".
-  * **Correct Pattern**:
-    1. Calculate metrics (Rank, Density) for the *entire* merged population.
-    2. Sort the entire population using `torch.argsort` or `evox.utils.lexsort` based on primary key (Rank) and secondary key (Density).
-    3. Slice the top N: `self.pop = sorted_pop[:N]`.
+## 4. Forbidden Anti-Patterns (STRICTLY PROHIBITED)
+
+1. **NO Individual-level Loops**: Do NOT write `for i in range(N):` to process individuals (e.g., mutation, crossover).
+    * **❌ BAD**: `for i in range(N): if rand() < prob: mask[i] = toggle()`
+    * **✅ GOOD (God-Mode)**: `do_mut = torch.rand(N) < prob; mask[do_mut] = toggle()`
+2. **NO CPU-GPU Sync**: Do NOT use `.item()` or `.tolist()` in the main execution paths. This forces the GPU to halt and wait for the CPU.
+3. **NO Dynamic Lists Extraction**: Do NOT use `selected_indices = []` and `extend()`. Operations must stay in Tensor space.
+4. **NO Iterative Selection (While loop peeling)**: Do NOT write `while len(selected) < N:` to iteratively pick fronts.
+    * **✅ GOOD (Lexsort)**: Calculate all metrics (e.g., Rank, Crowding Distance) simultaneously for **all** individuals. Then use `evox.utils.lexsort` or compound scoring (`Rank - CD * 1e-4`) with `torch.argsort` to rank all individuals in one single operation. Slice the top `self.pop = pop[sorted_idx[:N]]`.
+5. **NO Numpy**: Use `torch` exclusively unless absolutely necessary.
+
+## 5. Required Tensorization Paradigms
+* **Random Sampling**: Instead of looping to find targets, use `torch.where`, boolean masking (`x[mask] = ...`), or `torch.multinomial` for batched probabilistic sampling without `for` loops.
+* **In-Place Updates**: Instead of `X = X + Y`, use `X.add_(Y)` or `X += Y` if memory profiling is tight.
+* **Component Re-use**: Do not manually rewrite standard functions if EvoX/EvoMo (`non_dominate_rank`, `crowding_distance`) can process the variables directly in a batched manner.
+
+## 6. Algorithmic Fidelity (ABSOLUTE RULE)
+* **NO "SIMPLIFIED FOR VECTORIZATION"**: You MUST 100% faithfully translate the mathematical objectives, fitness calculations, and archive pruning from the original MATLAB code. 
+* **Do NOT** simplify complex metrics (e.g., higher-order distances, multi-stage selections, dual-fitness contributions) into single-dimension proximities just because it is easier to write in PyTorch without a loop. 
+* If tensorizing a highly complex evaluation formula is impossible without breaking the core logic, you are allowed to fall back to a lightweight `for` loop or use `torch.vmap`, but you **MUST NEVER ALTER THE ORIGINAL MATHEMATICS OR ECOLOGICAL LOGIC**.

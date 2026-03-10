@@ -5,7 +5,15 @@
       "id": "Bug #1 (Integer Sentinel)",
       "description": "Never initialize integer tensors (like Rank, FrontNo) with torch.inf. It causes overflow/conversion errors.",
       "action": "must_not",
-      "keywords": ["rank", "front", "index", "int", "integer", "inf", "sentinel"],
+      "keywords": [
+        "rank",
+        "front",
+        "index",
+        "int",
+        "integer",
+        "inf",
+        "sentinel"
+      ],
       "always_apply": true,
       "instruction": "Use `sentinel = torch.iinfo(torch.int32).max` instead of `torch.inf` for any integer-type tensor."
     },
@@ -13,7 +21,11 @@
       "id": "Bug #2 (Ceil Semantics)",
       "description": "torch.ceil on Python scalars behaves differently than expected in some PyTorch versions.",
       "action": "must_not",
-      "keywords": ["ceil", "round", "scalar"],
+      "keywords": [
+        "ceil",
+        "round",
+        "scalar"
+      ],
       "always_apply": true,
       "instruction": "Use integer math `(N + 1) // 2` instead of `torch.ceil`."
     },
@@ -21,7 +33,11 @@
       "id": "Bug #3 (Unique Stability)",
       "description": "torch.unique(dim=0) is non-deterministic or unstable for return_inverse in some versions.",
       "action": "must_not",
-      "keywords": ["unique", "duplicate", "distinct"],
+      "keywords": [
+        "unique",
+        "duplicate",
+        "distinct"
+      ],
       "always_apply": true,
       "instruction": "Use `evomo.utils.unique_rows_sorted(x)` instead of `torch.unique`."
     },
@@ -29,7 +45,11 @@
       "id": "Bug #5 (Torch Cond)",
       "description": "torch.cond is not fully supported in all compilation backends yet.",
       "action": "must_not",
-      "keywords": ["cond", "switch", "branch"],
+      "keywords": [
+        "cond",
+        "switch",
+        "branch"
+      ],
       "always_apply": true,
       "instruction": "Use standard python `if/else` or `torch.where`."
     },
@@ -37,7 +57,11 @@
       "id": "Bug #6 (Crowding Distance)",
       "description": "Crowding distance requires full population + boolean mask. Slicing population beforehand breaks index alignment.",
       "action": "must",
-      "keywords": ["crowding", "distance", "cd"],
+      "keywords": [
+        "crowding",
+        "distance",
+        "cd"
+      ],
       "always_apply": false,
       "instruction": "Call as `crowding_distance(full_objs, mask)`. Do NOT pass sliced `objs[mask]`. Mask must be boolean [N]."
     },
@@ -45,7 +69,13 @@
       "id": "Bug #7 (SDR Dominance Helper)",
       "description": "SDR requires strict mutual exclusion logic. Unordered pair logic is complex and prone to errors if inlined.",
       "action": "must",
-      "keywords": ["dominance", "sdr", "theta", "angle", "sort"],
+      "keywords": [
+        "dominance",
+        "sdr",
+        "theta",
+        "angle",
+        "sort"
+      ],
       "always_apply": false,
       "instruction": "MUST implement helper `_calculate_sdr_dominance_matrix(norm_p, theta)`. Do NOT use pair-indexed gather (norm_p[i] < norm_p[j])."
     },
@@ -53,7 +83,12 @@
       "id": "Bug #8 (Mutable Semantics)",
       "description": "Mutable objects (like Population) are tensor-like Buffers and DO NOT have a `.value` attribute.",
       "action": "must_not",
-      "keywords": [".value", "mutable", "buffer", "state"],
+      "keywords": [
+        ".value",
+        "mutable",
+        "buffer",
+        "state"
+      ],
       "always_apply": true,
       "instruction": "Treat Mutable objects directly as tensors. Never access `.value` attribute."
     },
@@ -61,7 +96,14 @@
       "id": "Bug #9 (Efficient Peeling)",
       "description": "For iterative front sorting, use a deadlock breaker and calculate metrics inside the loop.",
       "action": "must",
-      "keywords": ["nsga", "dominance", "front", "sort", "peeling", "deadlock"],
+      "keywords": [
+        "nsga",
+        "dominance",
+        "front",
+        "sort",
+        "peeling",
+        "deadlock"
+      ],
       "always_apply": true,
       "instruction": "1. Deadlock Breaker: if `num_in_front==0`, force select all remaining individuals (do NOT break). 2. EFFICIENCY: Calculate row-dependent metrics (like Crowding Distance) INSIDE the while loop immediately. Do NOT iterate fronts again in a second loop."
     },
@@ -69,7 +111,14 @@
       "id": "Bug #10 (MATLAB Dim Mapping)",
       "description": "MATLAB and PyTorch dimension indices differ. Direct translation of sum/min/max logic fails without mapping.",
       "action": "must",
-      "keywords": ["dim", "dimension", "sum", "min", "max", "matlab"],
+      "keywords": [
+        "dim",
+        "dimension",
+        "sum",
+        "min",
+        "max",
+        "matlab"
+      ],
       "always_apply": true,
       "instruction": "Map MATLAB dim=1 (col-wise) to PyTorch dim=0. Map MATLAB dim=2 (row-wise) to PyTorch dim=1."
     },
@@ -77,7 +126,13 @@
       "id": "Bug #11 (Forbidden Imports)",
       "description": "Strict compliance with EvoX ecosystem. No external math libraries or internal SDKs.",
       "action": "must_not",
-      "keywords": ["numpy", "pymoo", "platemo", "evott", "jax"],
+      "keywords": [
+        "numpy",
+        "pymoo",
+        "platemo",
+        "evott",
+        "jax"
+      ],
       "always_apply": true,
       "instruction": "Do NOT import numpy, pymoo, platemo, or evott.*. Use ONLY torch, evox.*, and evomo.*."
     },
@@ -85,7 +140,14 @@
       "id": "Bug #12 (Safe Division)",
       "description": "Division by zero in normalization or angle calculation causes NaN propagation.",
       "action": "must",
-      "keywords": ["division", "normalize", "angle", "cosine", "dist", "/"],
+      "keywords": [
+        "division",
+        "normalize",
+        "angle",
+        "cosine",
+        "dist",
+        "/"
+      ],
       "always_apply": true,
       "instruction": "Always add epsilon (1e-6) to the denominator: `x / (norm + 1e-6)`. Never divide directly."
     },
@@ -93,7 +155,15 @@
       "id": "Bug #13 (Reference Vector Init)",
       "description": "Decomposition algorithms (MOEA/D, RVEA) require uniform reference vectors (V) on the unit hyperplane.",
       "action": "must",
-      "keywords": ["decomposition", "moea/d", "rvea", "reference", "vector", "weight", "tchebycheff"],
+      "keywords": [
+        "decomposition",
+        "moea/d",
+        "rvea",
+        "reference",
+        "vector",
+        "weight",
+        "tchebycheff"
+      ],
       "always_apply": false,
       "instruction": "Initialize `self.v` using `evox.operators.sampling.uniform_sampling`. Do NOT manually create grids with loops."
     },
@@ -101,7 +171,13 @@
       "id": "Bug #14 (Randint Device)",
       "description": "torch.randint/rand/randn creates tensors on CPU by default, causing device mismatch errors.",
       "action": "must",
-      "keywords": ["rand", "randint", "sample", "mutation", "crossover"],
+      "keywords": [
+        "rand",
+        "randint",
+        "sample",
+        "mutation",
+        "crossover"
+      ],
       "always_apply": true,
       "instruction": "ALWAYS specify `device=...` in random generation functions: `torch.randint(..., device=self.lb.device)`."
     },
@@ -109,7 +185,13 @@
       "id": "Bug #17 (SDR Logic Fidelity)",
       "description": "SDR algorithm has specific non-standard math that must be preserved.",
       "action": "must",
-      "keywords": ["sdr", "angle", "theta", "dominance", "nsga-ii/sdr"],
+      "keywords": [
+        "sdr",
+        "angle",
+        "theta",
+        "dominance",
+        "nsga-ii/sdr"
+      ],
       "always_apply": false,
       "instruction": "1. Accumulate `zmin` historically. 2. Round data before `unique`. 3. Angle(eye)=Pi/2 (Cosine=0). 4. Use `unique` on min_angles before finding median. 5. CRITICAL: `Theta` must be clamped >= 1.0 (`max(1, ...)`)."
     },
@@ -117,7 +199,12 @@
       "id": "Bug #18 (Normalization Trigger)",
       "description": "MATLAB normalization often uses a global condition `0.05*max(range) < min(range)`.",
       "action": "must",
-      "keywords": ["normalization", "range", "zmin", "zmax"],
+      "keywords": [
+        "normalization",
+        "range",
+        "zmin",
+        "zmax"
+      ],
       "always_apply": false,
       "instruction": "Check the global condition `0.05*max(range) < min(range)` first. If True, divide ALL objs by range. If False, divide NONE. Do NOT use dimension-wise `torch.where`."
     },
@@ -125,9 +212,45 @@
       "id": "Bug #19 (Decomposition Logic)",
       "description": "Decomposition algorithms (MOEA/D, RVEA) require specific weight/scalarization setup.",
       "action": "must",
-      "keywords": ["moea/d", "decomposition", "weight", "tchebycheff", "pbi"],
+      "keywords": [
+        "moea/d",
+        "decomposition",
+        "weight",
+        "tchebycheff",
+        "pbi"
+      ],
       "always_apply": false,
       "instruction": "1. Init weights with `uniform_sampling`. 2. Use broadcasting (N, 1, M) - (1, N, M) for distance matrices. 3. Implement PBI/Tchebycheff using tensor operations."
+    },
+    {
+      "id": "Bug #20 (Sparse Mask Operation)",
+      "description": "Mask mutation/crossover in Sparse algorithms causes massive nested synchronization loops if not vectorized.",
+      "action": "must",
+      "keywords": [
+        "mask",
+        "sparse",
+        "binary",
+        "mutation",
+        "flip",
+        "vars_fit"
+      ],
+      "always_apply": false,
+      "instruction": "Do NOT use `for i in range(N):` to process bit-flipping. Instead, extract all candidates via boolean masks, sample targets simultaneously using `torch.multinomial`, and apply modifications in bulk using advanced tensor indexing: `off_mask[batch_indices, feature_indices] = result`."
+    },
+    {
+      "id": "Bug #21 (Crowding Distance Scope)",
+      "description": "Calculating Crowding Distance globally over the entire population destroys Pareto front ecological tiers.",
+      "action": "must_not",
+      "keywords": [
+        "crowding",
+        "distance",
+        "cd",
+        "cdist",
+        "mating",
+        "score"
+      ],
+      "always_apply": false,
+      "instruction": "NEVER compute `crowding_distance(fit, torch.ones(N))` for mating selection scoring over the entire population at once. Crowding distance is ONLY meaningful within the SAME non-dominated front. Use the `self.dis` (pre-calculated crowding distances per front during Environmental Selection) instead of recalculating an invalid global distance."
     }
   ]
 }

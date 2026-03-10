@@ -22,9 +22,10 @@ You must evaluate every rule in the library against two criteria:
 
 ### Criteria 2: Mechanism Matching (Contextual)
 * Read the **Analyst Report**. Does the algorithm employ specific mechanisms mentioned in the rule?
-* **Crowding Distance**: If the report mentions "crowding distance", "density estimation", or "CD", select **Bug #6**.
+* **Crowding Distance**: If the report mentions "crowding distance", "density estimation", or "CD", select **Bug #6** AND **Bug #21**.
 * **Dominance/Sort**: If the report mentions "non-dominated sort", "dominance", "SDR", "Pareto rank", or "assigning fronts", select **Bug #7** AND **Bug #9**.
 * **Uniqueness**: If the report mentions "removing duplicates" or "unique", select **Bug #3**.
+* **Sparse/Binary Iteration**: If the report mentions "sparse", "mask", "flip", or "binary variables", select **Bug #20**.
 
 ## CRITICAL ID SELECTION RULES (MUST FOLLOW)
 
