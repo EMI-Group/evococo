@@ -113,6 +113,9 @@ class JudgeResult(BaseModel):
     """Pydantic model describing the structured extraction for the final Judge output."""
 
     reasoning: str = Field(description="Detailed analysis of all branches.")
+    winning_branch_id: int = Field(
+        description="The integer ID of the branch that won the tournament (e.g. 0, 1, 2, 3, or 4)."
+    )
     code: str = Field(
         description="The FULL, UNMODIFIED Python code of the winning branch, no markdown ticks."
     )
@@ -573,7 +576,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                 await status_callback(
                     "step_done",
                     "Selector Done",
-                    "Winner Selected",
+                    f"Winner: Branch {judge_result.winning_branch_id}",
                     step_id="selector",
                     is_success=True,
                     extra_data={"report": reasoning},
@@ -587,6 +590,14 @@ async def run_pipeline(matlab_code: str, status_callback):
                     default=results[0],
                 )
                 final_code = best_res["code"]
+
+                await status_callback(
+                    "step_done",
+                    "Selector Fallback",
+                    f"Winner: Branch {best_res['branch_idx']}",
+                    step_id="selector",
+                    is_success=True,
+                )
 
         await status_callback("result_code", "Final Optimized Code", final_code)
         if run_dir:

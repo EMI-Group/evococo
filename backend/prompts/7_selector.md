@@ -42,6 +42,7 @@ You MUST output your response as a valid JSON object. Do not include markdown fo
 ```json
 {
   "reasoning": "Detailed analysis. Start with '## Judge's Verdict'. Explicitly compare the top candidates (e.g., 'Branch 0 vs Branch 2'). Explain why you might sacrifice a bit of IGD for better Tensorization if applicable.",
+  "winning_branch_id": 0,
   "code": "The FULL, UNMODIFIED Python code of the winning branch. Just the raw code text, no markdown backticks inside."
 }
 ```
