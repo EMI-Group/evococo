@@ -167,8 +167,8 @@ async def execute_code(
         )
 
         try:
-            # 30 seconds timeout
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+            # 120 seconds timeout a balance between computational headroom and infinite loop safety.
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
             stdout_str = stdout.decode() if stdout else ""
             stderr_str = stderr.decode() if stderr else ""
         except asyncio.TimeoutError:

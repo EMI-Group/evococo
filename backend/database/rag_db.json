@@ -251,6 +251,265 @@
       ],
       "always_apply": false,
       "instruction": "NEVER compute `crowding_distance(fit, torch.ones(N))` for mating selection scoring over the entire population at once. Crowding distance is ONLY meaningful within the SAME non-dominated front. Use the `self.dis` (pre-calculated crowding distances per front during Environmental Selection) instead of recalculating an invalid global distance."
+    },
+    {
+      "id": "Bug #22 (Iterative Numerical Solvers)",
+      "description": "Simplifying iterative numerical solvers (like Levenberg-Marquardt, Newton-Raphson, Gradient Descent) into a fixed loop or static single step destroys optimization convergence.",
+      "action": "must",
+      "keywords": [
+        "gradient descent",
+        "jacobian",
+        "levenberg-marquardt",
+        "lamda",
+        "learning rate",
+        "num_iter"
+      ],
+      "always_apply": false,
+      "instruction": "You MUST exactly preserve all adaptive updating logics (e.g. `if newMSE < MSE`, `lamda*1.1`, `lamda/1.1`) inside iterative numerical solvers. Do NOT simplify adaptive iterations to fixed `for` loops without error checks. Use `torch.where` or boolean indexing to selectively update variables (like `lamda` and learning rates) only for indices where the target metric improves."
+    },
+    {
+      "id": "Bug #23 (Reverse Natural Selection)",
+      "description": "Matrix dimension misalignment during ranking and density combinations causes the algorithm to aggregate scores of dominated solutions instead of dominators.",
+      "action": "must_not",
+      "keywords": [
+        "dominate",
+        "S(i)",
+        "R(i)",
+        "score aggregation",
+        "fitness sum"
+      ],
+      "always_apply": false,
+      "instruction": "When aggregating dominance scores (like SPEA2's `R` calculation based on `S`), do NOT use broadcasting shortcuts like `(dom_mat.T * S.unsqueeze(1)).sum(dim=0)`. You MUST use explicit matrix multiplication `dom_mat.T.float() @ S.float()` to guarantee correct axis mapping and prevent Reverse Natural Selection."
+    },
+    {
+      "id": "Bug #24 (Pareto Dominance Logical Fallacy)",
+      "description": "Swapping the logical operators for Pareto Dominance evaluation makes it mathematically impossible for any individual to dominate another in continuous space.",
+      "action": "must",
+      "keywords": [
+        "dominate",
+        "dominance relation",
+        "pareto",
+        "compare"
+      ],
+      "instruction": "The strictly correct vectorized formulation for checking if `X` dominates `Y` (where lower is better) is `(X <= Y).all(dim=-1) & (X < Y).any(dim=-1)`. NEVER swap the `<` and `<=` operators (e.g., `(X < Y).all()`)."
+    },
+    {
+      "id": "Bug #25 (Lexsort Axis Fallacy)",
+      "description": "PyTorch's lexsort processes keys starting from the last row (primary key). Placing the most important metric first causes catastrophic ecological collapse.",
+      "action": "must",
+      "keywords": [
+        "lexsort",
+        "tie-breaker",
+        "rank",
+        "score",
+        "sortrows",
+        "truncation"
+      ],
+      "always_apply": false,
+      "instruction": "When using `evox.utils.lexsort` to sort multiple criteria (e.g., Pareto Rank and Crowding Distance/Score), the PRIMARY sorting key MUST be placed LAST in the stack. Example: `lexsort(torch.stack([-score, rank.float()]))`. If translating MATLAB's `sortrows(Distance)`, you MUST reverse the keys `lexsort(torch.flip(sorted_dist.t(), dims=[0]))`."
+    },
+    {
+      "id": "Bug #26 (Unauthorized Logic Demolition)",
+      "description": "Arbitrarily deleting or simplifying algorithmic loops (like dynamic subregion merging or spatial clustering) destroys the structural capability of the Pareto approximation.",
+      "action": "must_not",
+      "keywords": [
+        "while",
+        "cluster",
+        "subregion",
+        "adaptive",
+        "division",
+        "merge",
+        "split"
+      ],
+      "instruction": "NEVER use shortcuts like `# Simplified logic: take top K` to bypass complex region merging or spatial logic from the original MATLAB code. You MUST perfectly preserve structural completeness (like merging clusters) using vectorized boolean masks. You may use `while/for` loops to iterate over structural regions (K), but NEVER use loops to iterate over individuals (N). Do NOT sacrifice structural completeness for ease of coding."
+    },
+    {
+      "id": "Bug #27 (Selection Pressure Demolition)",
+      "description": "Replacing fitness-based Parent Selection (like Tournament) with uniform random selection completely halts algorithmic convergence.",
+      "action": "must_not",
+      "keywords": [
+        "tournament",
+        "selection",
+        "mating",
+        "parent",
+        "pressure"
+      ],
+      "always_apply": false,
+      "instruction": "Whenever the original MATLAB code uses `TournamentSelection` to pick parents based on fitness/crowding, you MUST use PyTorch sorting or `evox.operators.selection.tournament_selection_multifit` to emulate it exactly. NEVER substitute it with `torch.randint` or `# Random for simplicity`. Do not wipe out evolutionary selection pressure."
+    },
+    {
+      "id": "Bug #28 (Subpopulation Crossover Contamination)",
+      "description": "Applying crossover over globally flattened multi-population tensors permanently destroys island topologies by interpolating parents across disconnected subpopulations.",
+      "action": "must",
+      "keywords": [
+        "population",
+        "subpopulation",
+        "multi-population",
+        "flatten",
+        "reshape",
+        "island"
+      ],
+      "instruction": "For multi-population algorithms, NEVER run `simulated_binary` or mutation on a flattened `(K*N, D)` population indiscriminately. Variation operators MUST be applied strictly within their respective subpopulation buckets (e.g. by vectorizing with a `(K, N, D)` batched shape if supported, or using a `for i in range(K):` loop over subpopulations) to prevent parents from different islands from cross-pollinating."
+    },
+    {
+      "id": "Bug #29 (Dynamic Lists over JIT Tensors)",
+      "description": "Using Python lists (`[]`, `.append`, `.pop`) inside EvoX state classes completely breaks JAX/JIT compilation, which requires static tensor shapes.",
+      "action": "must_not",
+      "keywords": [
+        "list",
+        "append",
+        "pop",
+        "dynamic",
+        "K elements"
+      ],
+      "always_apply": false,
+      "instruction": "NEVER use standard Python lists (`self.pop = []`, `self.pop.append()`) for state variables in an EvoX `Algorithm`. Multi-modal or dynamic-length states must be initialized as zero-padded tensors of shape `(K_max, N, D)` wrapped in a `Mutable`. You should use a Mutable scalar (e.g., `self.k = Mutable(torch.tensor(K))`) to track the active length, and slice it dynamically (`self.pop[:K]`)."
+    },
+    {
+      "id": "Bug #30 (Multi-Modal Diversity Distortion)",
+      "description": "Hallucinating minimum pairwise distances against entire sub-populations instead of extracting their 'best representative' masks destroys multi-modal overlap evaluations.",
+      "action": "must",
+      "keywords": [
+        "R",
+        "mask",
+        "overlap",
+        "similarity",
+        "simility",
+        "sum",
+        "best"
+      ],
+      "always_apply": false,
+      "instruction": "When translating logic that extracts the best individual from previous sub-populations to calculate a combined feature overlap (e.g., `R = R + Masks{j}(fs(j),:); R(R>0)=1; dis = sum(R & Masks, 2)`), you MUST perfectly preserve this sequence: 1. Extract the best feature mask per subpopulation `j`. 2. Perform a logical OR across these best masks (`R`). 3. Sum the boolean overlap of the current population with `R`. NEVER substitute this with a lazy `torch.cdist` or Hamming distance against all past individuals."
+    },
+    {
+      "id": "Bug #31 (Missing Truncation on Subregion Merge)",
+      "description": "Concatenating or merging discrete sub-populations without subsequently invoking Environmental Selection causes unbounded volumetric inflation of the population matrix.",
+      "action": "must_not",
+      "keywords": [
+        "merge",
+        "cat",
+        "concatenate",
+        "combine",
+        "division",
+        "K"
+      ],
+      "always_apply": false,
+      "instruction": "Whenever two sub-populations or clusters are merged (e.g., `torch.cat([pop[i], pop[j]], dim=0)`), you MUST immediately truncate the merged pool back to its target capacity (e.g., `pop_size // K`) via sorting or `EnvironmentalSelection`. NEVER leave a concatenated tensor untruncated, as it causes permanent matrix inflation."
+    },
+    {
+      "id": "Bug #32 (Objective Space Asymmetry)",
+      "description": "Calculating Pareto rank on augmented fitness tensors (M+1 dimensions) but calculating crowding distance on raw fitness tensors (M dimensions) severely breaks density estimations and traps the selection logic in a dimensional deadlock.",
+      "action": "must",
+      "keywords": [
+        "rank",
+        "crowding_distance",
+        "dis",
+        "combined_fit",
+        "appended"
+      ],
+      "always_apply": false,
+      "instruction": "When multi-objective dimensions are artificially augmented (for example, by appending a diversity penalty `dis` to form `combined_fit`), ALL metric operators (`non_dominate_rank`, `crowding_distance`, etc.) MUST be computed over the same augmented tensor (`combined_fit`). NEVER calculate `cd` on the original `fit` matrix if `rank` was calculated on `combined_fit`."
+    },
+    {
+      "id": "Bug #33 (State Recalculation Loss)",
+      "description": "Discarding output variables from `EnvironmentalSelection` entirely, only to recalculate them from raw matrices during mating selection, strips away crucial dynamically calculated objective transformations and blocks reproduction of valid solutions.",
+      "action": "must",
+      "keywords": [
+        "TournamentSelection",
+        "FrontNo",
+        "CrowdDis",
+        "EnvironmentalSelection",
+        "return"
+      ],
+      "always_apply": false,
+      "instruction": "If the original MATLAB helper function returns metrics like `FrontNo` and `CrowdDis` (or equivalents) which are immediately passed to parent selection operators like `TournamentSelection`, you MUST store them and pass them identically (e.g. `self.front_no`, `self.crowd_dis`). NEVER rewrite the logic to discard those outputs and call generic `non_dominate_rank` again right before parent selection."
+    },
+    {
+      "id": "Bug #34 (Binary Inheritance Demolition)",
+      "description": "Randomizing bits instead of strictly enforcing shared-gene inheritance during binary crossover (e.g., ignoring `find(P1 & ~P2)`) destroys genetic convergence, forcing the algorithm into a non-converging state.",
+      "action": "must",
+      "keywords": [
+        "crossover",
+        "mask",
+        "binary",
+        "inherit",
+        "genetic"
+      ],
+      "always_apply": false,
+      "instruction": "When translating conditional binary mask crossover (e.g. `index1 = find(Parent1Mask & ~Parent2Mask)`), you MUST perfectly translate the exact bitwise inheritance logic: offspring MUST inherit matching bits from parents, and only randomize bits where parents differ (`P1 != P2`). NEVER substitute this with a lazy generic randomization (like `torch.where(rand < 0.5, P1, random)`)."
+    },
+    {
+      "id": "Bug #35 (EvoX Operator Size Cloning)",
+      "description": "Duplicating masks or decision variables using `torch.cat([mask, mask])` to hide size mismatches when translating MATLAB's `OperatorGAhalf` destroys 50% of the population's genetic diversity with exact clones.",
+      "action": "must_not",
+      "keywords": [
+        "OperatorGAhalf",
+        "half",
+        "N/2",
+        "simulated_binary",
+        "clone",
+        "duplicate"
+      ],
+      "always_apply": false,
+      "instruction": "MATLAB's `OperatorGAhalf` generates `N/2` offspring from `N` parents. EvoX's `simulated_binary` generates `N` offspring from `N` parents. To translate `OperatorGAhalf` correctly, you MUST apply EvoX's operator and then SLICE the top half of the offspring (`off_pop = off_pop[:N//2]`). NEVER duplicate or clone masks (`torch.cat([off_mask, off_mask])`) to artificially stretch an `N/2` matrix to match an unaltered `N` EvoX output."
+    },
+    {
+      "id": "Bug #36 (Neighborhood Smoothing Hallucination)",
+      "description": "Calculating spatial distance between individuals and a global average vector (GV) instead of measuring pairwise topological proximity between individuals themselves collapses multi-modal local clustering.",
+      "action": "must",
+      "keywords": [
+        "k-nearest",
+        "pdist2",
+        "Hamming",
+        "neighborhood",
+        "distance",
+        "Mask"
+      ],
+      "always_apply": false,
+      "instruction": "When computing neighborhood proximity among feature masks (e.g. `pdist2(Mask, Mask, 'hamming')`), you MUST use `torch.cdist(p=0)` or a dedicated pairwise Hamming distance function to evaluate distance BETWEEN INDIVIDUALS in the population. NEVER calculate distances against a global variable or global average vector (like `GV`) as a shortcut."
+    },
+    {
+      "id": "Bug #37 (Mask Mutation Sparsity Dilution)",
+      "description": "Replacing MATLAB's deterministic 1-to-0 and 0-to-1 flip logic with randomized independent bit tournaments severely dilutes mutation probability and prevents variables from activating/deactivating efficiently.",
+      "action": "must",
+      "keywords": [
+        "mutation",
+        "mask",
+        "min(Score)",
+        "max(Score)",
+        "1-to-0",
+        "flip"
+      ],
+      "instruction": "When translating Mask Mutation that flips exactly one 1->0 and exactly one 0->1 based on `min(Score)` and `max(Score)`, you MUST filter by current mask values (e.g. `scores_1 = torch.where(mask, score, inf)` and `argmin(dim=1)`) to find candidates in a fully vectorized manner. NEVER substitute with a random `0..D` general tournament, and NEVER use a `for i in range(N)` loop to iterate over individuals."
+    },
+    {
+      "id": "Bug #38 (Index-to-Mask Conversion Type Error)",
+      "description": "Passing integer indices instead of boolean masks to EvoX masking operators (like `crowding_distance(fits, mask)`) triggers Out-of-Bounds IndexErrors since the operator internally expects a full-size N-length bool array to perform `~mask` inversions.",
+      "action": "must",
+      "keywords": [
+        "crowding_distance",
+        "CrowdDis",
+        "mask",
+        "index",
+        "subset"
+      ],
+      "instruction": "When passing a mask parameter to EvoX operators like `crowding_distance(fits, mask)`, you MUST ensure the mask is a strictly Boolean tensor of length N (e.g. `mask = torch.zeros(N, dtype=torch.bool); mask[curr_idx] = True`). NEVER pass a tensor of selected integer indices (e.g. `curr_idx`) directly as the mask argument."
+    },
+    {
+      "id": "Bug #39 (Batch Vectorization Override)",
+      "description": "Translating MATLAB element-wise iterations directly into Python `for` or `while` loops causes extreme PyTorch overhead due to kernel launch delays, destroying runtime performance.",
+      "action": "must",
+      "keywords": [
+        "for",
+        "loop",
+        "iterate",
+        "while",
+        "N",
+        "D",
+        "each"
+      ],
+      "always_apply": true,
+      "instruction": "You MUST aggressively eliminate Python `for/while` loops that iterate over individuals (N) or dimensions (D). ALWAYS substitute element-wise loops with advanced PyTorch tensor operations: 1. Use `valid_mask = score > threshold` followed by `tensor[valid_mask] = X` instead of `if` statements. 2. Use `torch.where` for conditional assignments. 3. Use Broadcasting and `torch.matmul` (`@`) for pairwise calculations instead of nested loops. DO NOT sacrifice algorithmic mathematical fidelity, but execute it entirely via vectorized bulk operations."
     }
   ]
 }

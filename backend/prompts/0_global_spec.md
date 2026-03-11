@@ -44,5 +44,6 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 
 ## 6. Algorithmic Fidelity (ABSOLUTE RULE)
 * **NO "SIMPLIFIED FOR VECTORIZATION"**: You MUST 100% faithfully translate the mathematical objectives, fitness calculations, and archive pruning from the original MATLAB code. 
+* **EXACT MATHEMATICAL ISOMORPHISM**: When translating scientific and mathematical elements (e.g., Jacobian matrices, multi-term fitness weighting, penalty formulas), you must perform a strict operator-by-operator mapping. NEVER alter the original code's constants (e.g., if MATLAB has `theta=0.2`, do not invent `theta=0.5` or hardcode your own assumptions). NEVER reduce multi-term formulas (e.g., if MATLAB uses `dis(:,1) + 0.1*dis(:,2)`, use `topk(k=2)` or `sort` to perfectly replicate the first and second neighbor weights; do NOT substitute it with a naive `min()` operation).
 * **Do NOT** simplify complex metrics (e.g., higher-order distances, multi-stage selections, dual-fitness contributions) into single-dimension proximities just because it is easier to write in PyTorch without a loop. 
 * If tensorizing a highly complex evaluation formula is impossible without breaking the core logic, you are allowed to fall back to a lightweight `for` loop or use `torch.vmap`, but you **MUST NEVER ALTER THE ORIGINAL MATHEMATICS OR ECOLOGICAL LOGIC**.
