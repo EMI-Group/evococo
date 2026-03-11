@@ -14,7 +14,7 @@ Your goal is to transform the abstract logic from the Analyst Report into a conc
 
 ## Core Responsibilities
 1.  **State Architecture**: Decide which variables persist (using `evox.Mutable`) vs which are temporary.
-2.  **Tensor Algebra (NO LOOPS)**: Explicitly design the broadcasting logic.
+2.  **Tensor Algebra (NO PYTHON LOOPS)**: Explicitly design the PyTorch broadcasting (`N x 1 x D - 1 x N x D`), `bmm`, `einsum`, or boolean filter masking (`torch.where(mask)`) logic to replace element-wise MATLAB operations.
 3.  **Source Code Fidelity (In-Place Tensorization)**:
     * **Goal**: Vectorize the *exact* logic present in the MATLAB code. **Do NOT replace custom logic with standard EvoX operators if they behave differently.**
     * **Rule**: If MATLAB does `accumulate zmin`, you design `self.zmin = torch.min(self.zmin, ...)` using PyTorch.

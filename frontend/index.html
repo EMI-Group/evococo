@@ -845,8 +845,19 @@ end`;
         function toggleTheme() {
             const html = document.documentElement;
             const icon = document.getElementById('theme-icon');
-            if (html.classList.contains('dark')) { html.classList.remove('dark'); html.classList.add('light'); icon.className = 'fa-solid fa-sun'; }
-            else { html.classList.remove('light'); html.classList.add('dark'); icon.className = 'fa-solid fa-moon'; }
+            const hljsTheme = document.getElementById('hljs-theme-dark');
+            if (html.classList.contains('dark')) { 
+                html.classList.remove('dark'); 
+                html.classList.add('light'); 
+                icon.className = 'fa-solid fa-sun'; 
+                if (hljsTheme) hljsTheme.href = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-light.min.css";
+            }
+            else { 
+                html.classList.remove('light'); 
+                html.classList.add('dark'); 
+                icon.className = 'fa-solid fa-moon'; 
+                if (hljsTheme) hljsTheme.href = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css";
+            }
         }
 
         function initResizers() {
