@@ -31,12 +31,6 @@ You must evaluate every rule in the library against two criteria:
 * **Multi-Criteria Sorting**: If the report mentions "lexsort", "truncation", tie-breaking based on distance, or sorting multiple criteria, select **Bug #25**.
 * **Complex Logic/Subregions**: If the report mentions "adaptive division", "while loop", "subregion merging", or "clustering", select **Bug #26**.
 * **Selection Pressure**: If the report mentions "TournamentSelection", "mating", or "picking parents", select **Bug #27**.
-* **Multi-Population**: If the report mentions "subpopulation", "multi-population", "island", or "K populations", select **Bug #28**, **Bug #29**, and **Bug #31**.
-* **Feature Overlap**: If the report mentions "R(R>0)=1", "similarity", "simility", or extracting the "best" mask for diversity/distance, select **Bug #30**.
-* **Variable Objective Spaces**: If the report mentions appending dimensions (e.g. `PopObj = [Population.objs, dis]`), combining metrics, or variable objective numbers, select **Bug #32**.
-* **State Passing**: If the report mentions `EnvironmentalSelection` returning variables (like `FrontNo`, `CrowdDis`, `App`, `Dis`) that are then fed into `TournamentSelection`, select **Bug #33**.
-* **Sparse Variation**: If the report mentions `OperatorGAhalf`, crossing masks, `Parent1Mask`, `Parent2Mask`, `find`, or flipping `1` to `0`, select **Bug #34**, **Bug #35**, and **Bug #37**.
-* **Topological Neighborhoods**: If the report mentions `pdist2`, finding nearest neighbors, smoothing with `GV`, or interacting with masks, select **Bug #36**.
 * **Index-to-Mask Typing**: If the report mentions calculating `crowding_distance` on a subset, passing `index`, or masking operators, select **Bug #38**.
 * **Python Overhead Override**: If the report mentions calculating metrics across populations, or uses `each`, `for`, `while`, or `iterate`, select **Bug #39** to eradicate slow Python iterations.
 
