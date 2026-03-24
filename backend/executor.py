@@ -1,30 +1,17 @@
 import os
-import subprocess
+import asyncio
 import sys
 import uuid
 import re
 import math
 import time
+import shutil
 
-# --- Configuration section ---
-
-# Ruff ignore rule configuration
-IGNORE_RUFF_CODES = [
-    "E501",
-    "E402",
-    "E722",
-    "E731",
-    "E741",
-    "E701",
-    "E702",
-    "E703",
-    "I",
-]
-
-# --- Path configuration ---
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
-BASE_WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "temp_workspace")
+from .config import (
+    IGNORE_RUFF_CODES,
+    BASE_WORKSPACE_DIR,
+    MAX_RETAINED_WORKSPACES,
+)
 
 if not os.path.exists(BASE_WORKSPACE_DIR):
     os.makedirs(BASE_WORKSPACE_DIR)
@@ -40,22 +27,46 @@ def setup_workspace(session_id: str) -> str:
 def cleanup_workspace(session_id: str):
     """
     Clean up workspace directory
-    [Modified] Now keeps files for debugging
+    [Modified] Retains up to 50 global debug records to prevent disk bombs.
     """
     workspace_path = os.path.join(BASE_WORKSPACE_DIR, session_id)
     if os.path.exists(workspace_path):
         try:
-            # -------------------------------------------------------
-            # [DEBUG MODE] Commented out deletion logic, keep all intermediate files
-            # -------------------------------------------------------
-            # shutil.rmtree(workspace_path)
-
             print(f">>> [DEBUG] Workspace kept at: {workspace_path}")
+
+            # Global cleanup: to avoid filling up the disk
+            cleanup_old_workspaces(
+                BASE_WORKSPACE_DIR, max_retained=MAX_RETAINED_WORKSPACES
+            )
         except Exception as e:
             print(f"Error cleaning up workspace {session_id}: {e}")
 
 
-def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str]:
+def cleanup_old_workspaces(base_dir: str, max_retained: int = MAX_RETAINED_WORKSPACES):
+    """Keep only the 'max_retained' most recent directories in base_dir"""
+    try:
+        if not os.path.exists(base_dir):
+            return
+
+        dirs = []
+        for d in os.listdir(base_dir):
+            path = os.path.join(base_dir, d)
+            if os.path.isdir(path):
+                dirs.append(path)
+
+        # Sort by modification time, oldest first
+        dirs.sort(key=lambda x: os.path.getmtime(x))
+
+        if len(dirs) > max_retained:
+            dirs_to_delete = dirs[:-max_retained]
+            for d in dirs_to_delete:
+                shutil.rmtree(d, ignore_errors=True)
+                print(f">>> [DEBUG] Deleted old workspace: {d}")
+    except Exception as e:
+        print(f">>> [DEBUG] Error in global workspace cleanup: {e}")
+
+
+async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str]:
     """Use Ruff for static code analysis"""
     is_temp_session = False
     if not session_id:
@@ -82,27 +93,35 @@ def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str
             "--no-cache",
         ]
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=5,
+        # Use asyncio.create_subprocess_exec to avoid blocking the event loop
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=workspace,
         )
 
-        if result.returncode == 0:
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
+            # Decode output
+            stdout_str = stdout.decode() if stdout else ""
+            stderr_str = stderr.decode() if stderr else ""
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            return False, "System Error: Ruff check timed out."
+
+        if process.returncode == 0:
             return True, ""
         else:
-            raw_output = result.stdout + "\n" + result.stderr
+            raw_output = stdout_str + "\n" + stderr_str
             clean_error = raw_output.replace(file_path, "script.py").strip()
             if not clean_error:
                 clean_error = (
-                    f"Ruff failed (Exit Code: {result.returncode}), check install."
+                    f"Ruff failed (Exit Code: {process.returncode}), check install."
                 )
             return False, clean_error
 
-    except subprocess.TimeoutExpired:
-        return False, "System Error: Ruff check timed out."
     except Exception as e:
         return False, f"Static Check Error: {str(e)}"
     finally:
@@ -110,7 +129,9 @@ def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str
             cleanup_workspace(session_id)
 
 
-def execute_code(code_str: str, session_id: str = None, filename="algo_script.py"):
+async def execute_code(
+    code_str: str, session_id: str = None, filename="algo_script.py"
+):
     """
     Base execution function: run code and return output
     [Modified] Force CPU execution to prevent parallel freeze
@@ -122,6 +143,7 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
     file_path = os.path.join(workspace, filename)
 
     try:
+        # Note: can use aiofiles or to_thread here if needed, but simple file write is usually fast enough
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(code_str)
     except Exception as e:
@@ -135,21 +157,34 @@ def execute_code(code_str: str, session_id: str = None, filename="algo_script.py
     # ==============================
 
     try:
-        result = subprocess.run(
-            [sys.executable, filename],
-            capture_output=True,
-            text=True,
-            timeout=30,  # 30 seconds timeout
+        # Use asyncio.create_subprocess_exec to avoid event loop blocking
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            filename,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
             cwd=workspace,
         )
 
-        if result.returncode == 0:
-            return True, result.stdout, result.stderr
-        else:
-            return False, result.stdout, result.stderr
+        try:
+            # 120 seconds timeout a balance between computational headroom and infinite loop safety.
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
+            stdout_str = stdout.decode() if stdout else ""
+            stderr_str = stderr.decode() if stderr else ""
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            return (
+                False,
+                "",
+                "Runtime Error: Execution timed out (Possible infinite loop).",
+            )
 
-    except subprocess.TimeoutExpired:
-        return False, "", "Runtime Error: Execution timed out (Possible infinite loop)."
+        if process.returncode == 0:
+            return True, stdout_str, stderr_str
+        else:
+            return False, stdout_str, stderr_str
+
     except Exception as e:
         return False, "", f"Runtime Error: {str(e)}"
 
@@ -171,12 +206,12 @@ def parse_igd_from_stdout(stdout: str) -> list[float]:
     return igds
 
 
-def execute_code_trial(
+async def execute_code_trial(
     code_str: str, session_id: str, filename="algo_script.py"
 ) -> dict:
     """Advanced trial run function: execute code and analyze convergence metrics"""
     start_time = time.time()
-    success, output, error = execute_code(code_str, session_id, filename)
+    success, output, error = await execute_code(code_str, session_id, filename)
     duration = time.time() - start_time
 
     igds = parse_igd_from_stdout(output)

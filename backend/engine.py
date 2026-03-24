@@ -5,29 +5,26 @@ import os
 import datetime
 import uuid
 import re
+from pydantic import BaseModel, Field
 
 from .generator import generate_llm_response
 from .executor import (
     execute_code_trial,
     check_syntax_with_ruff,
     cleanup_workspace,
+    cleanup_old_workspaces,
 )
 
-# --- Path configuration ---
-
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
-HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
-PROMPTS_DIR = os.path.join(BACKEND_DIR, "prompts")
-DATABASE_DIR = os.path.join(BACKEND_DIR, "database")
-
-# Rule database path
-RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
-# Global specification path
-GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
-
-# Number of parallel branches
-NUM_BRANCHES = 5
+from .config import (
+    NUM_BRANCHES,
+    STRATEGIES_SHORT,
+    STRATEGIES_FULL,
+    RULES_DB_PATH,
+    GLOBAL_SPEC_PATH,
+    HISTORY_DIR,
+    PROMPTS_DIR,
+    MAX_RETAINED_WORKSPACES,
+)
 
 
 # --- Data loading helper functions ---
@@ -73,13 +70,17 @@ def load_resource(filename):
 # --- General helper functions ---
 
 
-def ensure_history_dir():
+def ensure_history_dir(algo_name="UnknownAlgo"):
     """Ensure history directory exists, and return independent timestamp directory for current run"""
     if not os.path.exists(HISTORY_DIR):
         os.makedirs(HISTORY_DIR)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(HISTORY_DIR, timestamp)
+    run_dir = os.path.join(HISTORY_DIR, f"{timestamp}_{algo_name}")
     os.makedirs(run_dir)
+
+    # Trigger global history cleanup
+    cleanup_old_workspaces(HISTORY_DIR, max_retained=MAX_RETAINED_WORKSPACES)
+
     return run_dir
 
 
@@ -97,7 +98,7 @@ def save_artifact(run_dir, filename, content):
 
 
 def extract_json(text):
-    """Only used for RAG Step JSON parsing"""
+    """Only used for RAG Step JSON parsing (legacy compatibility fallback)"""
     try:
         if "```json" in text:
             text = text.split("```json")[1].split("```")[0]
@@ -106,6 +107,26 @@ def extract_json(text):
         return json.loads(text.strip())
     except:  # noqa: E722
         return {}
+
+
+class JudgeResult(BaseModel):
+    """Pydantic model describing the structured extraction for the final Judge output."""
+
+    reasoning: str = Field(description="Detailed analysis of all branches.")
+    winning_branch_id: int = Field(
+        description="The integer ID of the branch that won the tournament (e.g. 0, 1, 2, 3, or 4)."
+    )
+    code: str = Field(
+        description="The FULL, UNMODIFIED Python code of the winning branch, no markdown ticks."
+    )
+
+
+class RagResult(BaseModel):
+    """Pydantic model describing the structured extraction for the RAG step."""
+
+    selected_bug_numbers: list[int] = Field(
+        description="A list of bug integers extracted from the rules."
+    )
 
 
 # --- Core logic: single branch lifecycle ---
@@ -132,23 +153,8 @@ async def run_single_branch_lifecycle(
     L_TAG = f"Branch {branch_idx}"
 
     # Strategy injection: 5 different tensorization schools
-    strategies_short = [
-        "BROADCASTING (No Loops)",
-        "EINSUM OPTIMIZATION",
-        "MASKED OPS (No If/Else)",
-        "IN-PLACE EFFICIENCY",
-        "ADVANCED OPS (cdist)",
-    ]
-    strategies_full = [
-        "STRATEGY: BROADCASTING EXPERT. Use standard PyTorch broadcasting (unsqueeze, expand) for all matrix operations. Strictly NO for-loops.",
-        "STRATEGY: EINSUM OPTIMIZATION. Use `torch.einsum` for all matrix multiplications and dimension reductions. It is cleaner and faster.",
-        "STRATEGY: MASKED OPERATIONS. Avoid `if/else` logic. Use `torch.where`, `torch.masked_fill` to handle conditional logic on tensors.",
-        "STRATEGY: IN-PLACE EFFICIENCY. Minimize memory overhead. Use in-place operations (`add_`, `mul_`) where possible.",
-        "STRATEGY: ADVANCED OPS. Use high-level PyTorch functions like `torch.cdist`, `torch.linalg.norm` instead of manual formulas.",
-    ]
-
-    current_strategy_short = strategies_short[branch_idx % len(strategies_short)]
-    current_strategy_full = strategies_full[branch_idx % len(strategies_full)]
+    current_strategy_short = STRATEGIES_SHORT[branch_idx % len(STRATEGIES_SHORT)]
+    current_strategy_full = STRATEGIES_FULL[branch_idx % len(STRATEGIES_FULL)]
 
     temp_offset = 0.08 * branch_idx
     current_temp = 0.6 + temp_offset
@@ -191,7 +197,7 @@ async def run_single_branch_lifecycle(
         # =================================================
         MAX_STATIC_RETRIES = 2
         for i in range(MAX_STATIC_RETRIES + 1):
-            is_valid, error_msg = check_syntax_with_ruff(current_code, session_id)
+            is_valid, error_msg = await check_syntax_with_ruff(current_code, session_id)
 
             if is_valid:
                 await status_callback("log", L_TAG, "Static Check: PASSED.")
@@ -232,7 +238,7 @@ async def run_single_branch_lifecycle(
                 "log", L_TAG, f"Runtime Attempt {attempt + 1} executing..."
             )
 
-            report = execute_code_trial(current_code, session_id)
+            report = await execute_code_trial(current_code, session_id)
 
             if run_dir:
                 save_artifact(
@@ -330,13 +336,23 @@ async def run_pipeline(matlab_code: str, status_callback):
     # This corresponds to the reference_platemo.md we just created
     reference_content = load_resource("reference_platemo.md")
 
+    # Extract algorithm name from matlab_code
+    algo_name = "UnknownAlgo"
+    m_class = re.search(r"classdef\s+([A-Za-z0-9_]+)", matlab_code)
+    if m_class:
+        algo_name = m_class.group(1)
+    else:
+        m_func = re.search(r"function\s+.*?(?:=\s*|\s+)([A-Za-z0-9_]+)\s*\(", matlab_code)
+        if m_func:
+            algo_name = m_func.group(1)
+
     # 1. Initialization
     try:
-        run_dir = ensure_history_dir()
+        run_dir = ensure_history_dir(algo_name)
     except Exception:
         run_dir = None
 
-    session_id = os.path.basename(run_dir) if run_dir else str(uuid.uuid4())[:8]
+    session_id = os.path.basename(run_dir) if run_dir else f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{algo_name}"
 
     if run_dir:
         save_artifact(run_dir, "0_input.m", matlab_code)
@@ -385,11 +401,13 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         all_rules_desc = "\n---\n".join(rules_context_list)
 
-        rag_str = await generate_llm_response(
-            "2_rag_selector.md", rules_context=all_rules_desc, analyst_report=ir_md
+        rag_result = await generate_llm_response(
+            "2_rag_selector.md",
+            response_model=RagResult,
+            rules_context=all_rules_desc,
+            analyst_report=ir_md,
         )
-        rag_json = extract_json(rag_str)
-        selected_bug_numbers = rag_json.get("selected_bug_numbers", [])
+        selected_bug_numbers = rag_result.selected_bug_numbers
 
         # ... (Rule matching logic) ...
         def _bug_no_from_id(s: str):
@@ -421,7 +439,7 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         matched_rules_text = "\n".join(matched_rules_list)
         if run_dir:
-            save_artifact(run_dir, "2_rag_selection.json", rag_json)
+            save_artifact(run_dir, "2_rag_selection.json", rag_result.model_dump())
 
         await status_callback(
             "log", "RAG", f"Selected {len(selected_bug_numbers)} specific rules."
@@ -531,49 +549,23 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         else:
             try:
-                # 3. Send request
-                judge_response = await generate_llm_response(
-                    "7_selector.md", candidates_list=candidates_json
+                # 3. Send request strictly expecting JudgeResult JSON
+                judge_result = await generate_llm_response(
+                    "7_selector.md",
+                    response_model=JudgeResult,
+                    candidates_list=candidates_json,
                 )
 
                 if run_dir:
-                    save_artifact(run_dir, "7_judge_raw.md", judge_response)
+                    save_artifact(
+                        run_dir, "7_judge_raw.json", judge_result.model_dump()
+                    )
 
                 # =========================================================
-                # [Core Logic] Explicit Delimiter Parsing
+                # [Core Logic] Clean Extractions
                 # =========================================================
-                reasoning = "Judge provided no specific reasoning."
-                final_code = ""
-
-                # 1. Extract code
-                if (
-                    "[JUDGE_CODE_START]" in judge_response
-                    and "[JUDGE_CODE_END]" in judge_response
-                ):
-                    final_code = (
-                        judge_response.split("[JUDGE_CODE_START]")[1]
-                        .split("[JUDGE_CODE_END]")[0]
-                        .strip()
-                    )
-                else:
-                    # Fallback: Assume all is code
-                    final_code = (
-                        judge_response.replace("```python", "")
-                        .replace("```", "")
-                        .strip()
-                    )
-
-                # 2. Extract reasoning
-                if (
-                    "[JUDGE_REASONING_START]" in judge_response
-                    and "[JUDGE_REASONING_END]" in judge_response
-                ):
-                    reasoning = (
-                        judge_response.split("[JUDGE_REASONING_START]")[1]
-                        .split("[JUDGE_REASONING_END]")[0]
-                        .strip()
-                    )
-
+                reasoning = judge_result.reasoning
+                final_code = judge_result.code
                 # =========================================================
 
                 # [LOG] Live judge verdict
@@ -594,7 +586,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                 await status_callback(
                     "step_done",
                     "Selector Done",
-                    "Winner Selected",
+                    f"Winner: Branch {judge_result.winning_branch_id}",
                     step_id="selector",
                     is_success=True,
                     extra_data={"report": reasoning},
@@ -608,6 +600,14 @@ async def run_pipeline(matlab_code: str, status_callback):
                     default=results[0],
                 )
                 final_code = best_res["code"]
+
+                await status_callback(
+                    "step_done",
+                    "Selector Fallback",
+                    f"Winner: Branch {best_res['branch_idx']}",
+                    step_id="selector",
+                    is_success=True,
+                )
 
         await status_callback("result_code", "Final Optimized Code", final_code)
         if run_dir:
