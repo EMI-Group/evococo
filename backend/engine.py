@@ -70,12 +70,12 @@ def load_resource(filename):
 # --- General helper functions ---
 
 
-def ensure_history_dir():
+def ensure_history_dir(algo_name="UnknownAlgo"):
     """Ensure history directory exists, and return independent timestamp directory for current run"""
     if not os.path.exists(HISTORY_DIR):
         os.makedirs(HISTORY_DIR)
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(HISTORY_DIR, timestamp)
+    run_dir = os.path.join(HISTORY_DIR, f"{timestamp}_{algo_name}")
     os.makedirs(run_dir)
 
     # Trigger global history cleanup
@@ -336,13 +336,23 @@ async def run_pipeline(matlab_code: str, status_callback):
     # This corresponds to the reference_platemo.md we just created
     reference_content = load_resource("reference_platemo.md")
 
+    # Extract algorithm name from matlab_code
+    algo_name = "UnknownAlgo"
+    m_class = re.search(r"classdef\s+([A-Za-z0-9_]+)", matlab_code)
+    if m_class:
+        algo_name = m_class.group(1)
+    else:
+        m_func = re.search(r"function\s+.*?(?:=\s*|\s+)([A-Za-z0-9_]+)\s*\(", matlab_code)
+        if m_func:
+            algo_name = m_func.group(1)
+
     # 1. Initialization
     try:
-        run_dir = ensure_history_dir()
+        run_dir = ensure_history_dir(algo_name)
     except Exception:
         run_dir = None
 
-    session_id = os.path.basename(run_dir) if run_dir else str(uuid.uuid4())[:8]
+    session_id = os.path.basename(run_dir) if run_dir else f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{algo_name}"
 
     if run_dir:
         save_artifact(run_dir, "0_input.m", matlab_code)
