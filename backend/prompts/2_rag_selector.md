@@ -31,8 +31,8 @@ You must evaluate every rule in the library against two criteria:
 * **Multi-Criteria Sorting**: If the report mentions "lexsort", "truncation", tie-breaking based on distance, or sorting multiple criteria, select **Bug #25**.
 * **Complex Logic/Subregions**: If the report mentions "adaptive division", "while loop", "subregion merging", or "clustering", select **Bug #26**.
 * **Selection Pressure**: If the report mentions "TournamentSelection", "mating", or "picking parents", select **Bug #27**.
-* **Index-to-Mask Typing**: If the report mentions calculating `crowding_distance` on a subset, passing `index`, or masking operators, select **Bug #38**.
-* **Python Overhead Override**: If the report mentions calculating metrics across populations, or uses `each`, `for`, `while`, or `iterate`, select **Bug #39** to eradicate slow Python iterations.
+* **Index-to-Mask Typing**: If the report mentions calculating `crowding_distance` on a subset, passing `index`, or masking operators, select **Bug #28**.
+* **Python Overhead Override**: If the report mentions calculating metrics across populations, or uses `each`, `for`, `while`, or `iterate`, select **Bug #29** to eradicate slow Python iterations.
 
 ## CRITICAL ID SELECTION RULES (MUST FOLLOW)
 

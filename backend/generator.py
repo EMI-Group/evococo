@@ -72,6 +72,7 @@ async def generate_llm_response(
             messages=[{"role": "user", "content": prompt_content}],
             temperature=TEMPERATURE,
             stream=False,
+            extra_body={"reasoning_effort": "minimal"},
             **kwargs_api,
         )
 

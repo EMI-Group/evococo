@@ -338,7 +338,7 @@
       "instruction": "Whenever the original MATLAB code uses `TournamentSelection` to pick parents based on fitness/crowding, you MUST use PyTorch sorting or `evox.operators.selection.tournament_selection_multifit` to emulate it exactly. NEVER substitute it with `torch.randint` or `# Random for simplicity`. Do not wipe out evolutionary selection pressure."
     },
     {
-      "id": "Bug #38 (Index-to-Mask Conversion Type Error)",
+      "id": "Bug #28 (Index-to-Mask Conversion Type Error)",
       "description": "Passing integer indices instead of boolean masks to EvoX masking operators (like `crowding_distance(fits, mask)`) triggers Out-of-Bounds IndexErrors since the operator internally expects a full-size N-length bool array to perform `~mask` inversions.",
       "action": "must",
       "keywords": [
@@ -351,7 +351,7 @@
       "instruction": "When passing a mask parameter to EvoX operators like `crowding_distance(fits, mask)`, you MUST ensure the mask is a strictly Boolean tensor of length N (e.g. `mask = torch.zeros(N, dtype=torch.bool); mask[curr_idx] = True`). NEVER pass a tensor of selected integer indices (e.g. `curr_idx`) directly as the mask argument."
     },
     {
-      "id": "Bug #39 (Batch Vectorization Override)",
+      "id": "Bug #29 (Batch Vectorization Override)",
       "description": "Translating MATLAB element-wise iterations directly into Python `for` or `while` loops causes extreme PyTorch overhead due to kernel launch delays, destroying runtime performance.",
       "action": "must",
       "keywords": [
