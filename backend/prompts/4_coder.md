@@ -106,7 +106,7 @@ if __name__ == "__main__":
     from evox.problems.numerical import DTLZ2
     from evox.workflows import StdWorkflow
 
-    torch.set_default_device("cpu")
+    torch.set_default_device("cuda")
 
     # <YourAlgoName> must be replaced by your actual class name
     algo = <YourAlgoName>(pop_size=100, n_objs=3, lb=-torch.zeros(12), ub=torch.ones(12))
@@ -114,7 +114,7 @@ if __name__ == "__main__":
     pf = prob.pf()
     workflow = StdWorkflow(algo, prob)
     workflow.init_step()
-    jit_state_step = workflow.step
+    jit_state_step = torch.compile(workflow.step)
 
     for i in range(50):
         jit_state_step()

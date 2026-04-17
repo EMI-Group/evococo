@@ -109,7 +109,10 @@ async def main():
             report = await execute_code_trial(modified_code, session_id=f"run_{uuid.uuid4().hex[:6]}", filename=py_file)
             
             exec_pass = report.get("success", False)
-            optim_pass = report.get("is_converging", False)
+            
+            # Override with strict 20% improvement condition for convergence
+            igds = report.get("igd_history", [])
+            optim_pass = len(igds) >= 2 and igds[-1] < igds[0] * 0.8
             
             if exec_pass and report.get("has_nan", False):
                 exec_pass = False # Marked failure if NaNs heavily persist
