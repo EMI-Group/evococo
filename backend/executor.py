@@ -6,6 +6,8 @@ import re
 import math
 import time
 import shutil
+import traceback
+import subprocess
 
 from .config import (
     IGNORE_RUFF_CODES,
@@ -93,32 +95,31 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
             "--no-cache",
         ]
 
-        # Use asyncio.create_subprocess_exec to avoid blocking the event loop
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=workspace,
-        )
+        def run_ruff():
+            return subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=workspace,
+                timeout=5
+            )
 
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
-            # Decode output
-            stdout_str = stdout.decode() if stdout else ""
-            stderr_str = stderr.decode() if stderr else ""
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
+            result = await asyncio.to_thread(run_ruff)
+            stdout_str = result.stdout.decode(errors='replace') if result.stdout else ""
+            stderr_str = result.stderr.decode(errors='replace') if result.stderr else ""
+            returncode = result.returncode
+        except subprocess.TimeoutExpired:
             return False, "System Error: Ruff check timed out."
 
-        if process.returncode == 0:
+        if returncode == 0:
             return True, ""
         else:
             raw_output = stdout_str + "\n" + stderr_str
             clean_error = raw_output.replace(file_path, "script.py").strip()
             if not clean_error:
                 clean_error = (
-                    f"Ruff failed (Exit Code: {process.returncode}), check install."
+                    f"Ruff failed (Exit Code: {returncode}), check install."
                 )
             return False, clean_error
 
@@ -157,36 +158,34 @@ async def execute_code(
     # ==============================
 
     try:
-        # Use asyncio.create_subprocess_exec to avoid event loop blocking
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            filename,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=workspace,
-        )
+        def run_script():
+            return subprocess.run(
+                [sys.executable, filename],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=workspace,
+                timeout=60
+            )
 
         try:
-            # 120 seconds timeout a balance between computational headroom and infinite loop safety.
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
-            stdout_str = stdout.decode() if stdout else ""
-            stderr_str = stderr.decode() if stderr else ""
-        except asyncio.TimeoutError:
-            process.kill()
-            await process.communicate()
+            result = await asyncio.to_thread(run_script)
+            stdout_str = result.stdout.decode(errors='replace') if result.stdout else ""
+            stderr_str = result.stderr.decode(errors='replace') if result.stderr else ""
+            returncode = result.returncode
+        except subprocess.TimeoutExpired:
             return (
                 False,
                 "",
                 "Runtime Error: Execution timed out (Possible infinite loop).",
             )
 
-        if process.returncode == 0:
+        if returncode == 0:
             return True, stdout_str, stderr_str
         else:
             return False, stdout_str, stderr_str
 
     except Exception as e:
-        return False, "", f"Runtime Error: {str(e)}"
+        return False, "", f"Runtime Error: {str(e)}\n{traceback.format_exc()}"
 
 
 def parse_igd_from_stdout(stdout: str) -> list[float]:
