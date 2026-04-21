@@ -53,11 +53,13 @@ http://localhost:8000
 
 ## Running Experiments
 
-To run batch translations for MATLAB algorithms to Python, place your MATLAB files in `experiments/matlab_code` and run:
+To run batch translations for MATLAB algorithms to Python, place your `.m`/`.txt` files or **algorithm folders containing multiple `.m` files** in `experiments/matlab_code` and run using the `tensor` conda environment:
 
 ```bash
-python experiments/batch_translate.py --input_dir ./experiments/matlab_code
+conda run -n tensor python experiments/batch_translate.py --input_dir ./experiments/matlab_code --output_dir ./experiments/benchmark_results --repeats 2
 ```
+
+> **Tip:** You can adjust the `--repeats 2` argument to control how many translation attempts are run per algorithm.
 
 To evaluate the generated Python files (results are saved in `experiments/benchmark_results` by default):
 

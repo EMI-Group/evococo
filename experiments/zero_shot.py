@@ -94,7 +94,7 @@ async def zero_shot_translate(matlab_code: str, mode: str) -> str:
                 }
             ],
             temperature=0.0,
-            timeout=60.0,
+            timeout=300.0,
             extra_body={"reasoning_effort": "minimal"},
         )
         content = response.choices[0].message.content
@@ -119,8 +119,17 @@ async def main():
         print(f"Error: Input file {args.input} not found.")
         return
 
-    with open(args.input, "r", encoding="utf-8") as f:
-        matlab_code = f.read()
+    matlab_code = ""
+    if os.path.isdir(args.input):
+        for root, _, files in os.walk(args.input):
+            for file in sorted(files):
+                if file.endswith('.m') or file.endswith('.txt'):
+                    fpath = os.path.join(root, file)
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        matlab_code += f"\n\n--- {file} ---\n{f.read()}"
+    else:
+        with open(args.input, "r", encoding="utf-8") as f:
+            matlab_code = f.read()
 
     print("=======================================")
     print(" [Baseline: Zero-Shot LLM Translation] ")

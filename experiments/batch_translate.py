@@ -9,10 +9,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from backend.engine import run_pipeline
 
 async def process_file(file_path, num_repeats, output_dir=None):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        matlab_code = f.read()
-    
-    algo_name = os.path.splitext(os.path.basename(file_path))[0]
+    matlab_code = ""
+    if os.path.isdir(file_path):
+        for root, _, files in os.walk(file_path):
+            for file in sorted(files):
+                if file.endswith('.m') or file.endswith('.txt'):
+                    fpath = os.path.join(root, file)
+                    with open(fpath, 'r', encoding='utf-8') as f:
+                        matlab_code += f"\n\n--- {file} ---\n{f.read()}"
+        algo_name = os.path.basename(file_path)
+    else:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            matlab_code = f.read()
+        algo_name = os.path.splitext(os.path.basename(file_path))[0]
     print(f"\n{'='*50}\nProcessing Algorithm: {algo_name}\n{'='*50}")
     
     for i in range(num_repeats):
@@ -62,9 +71,14 @@ async def main():
         print(f"Error: {input_dir} is not a valid directory.")
         sys.exit(1)
 
-    m_files = [f for f in os.listdir(input_dir) if f.endswith('.m') or f.endswith('.txt')]
+    m_files = []
+    for f in os.listdir(input_dir):
+        path = os.path.join(input_dir, f)
+        if os.path.isdir(path) or f.endswith('.m') or f.endswith('.txt'):
+            m_files.append(f)
+            
     if not m_files:
-        print(f"No .m or .txt files found in {input_dir}.")
+        print(f"No algorithms (.m/.txt files or folders) found in {input_dir}.")
         return
 
     print(f"Found {len(m_files)} algorithm(s) to process. Outputs will be saved to {output_dir}")
