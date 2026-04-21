@@ -111,7 +111,7 @@ async def zero_shot_translate(matlab_code: str, mode: str) -> str:
 async def main():
     parser = argparse.ArgumentParser(description="Zero-shot MATLAB to Python Translation Baseline")
     parser.add_argument("--input", "-i", type=str, required=True, help="Path to input MATLAB file")
-    parser.add_argument("--output", "-o", type=str, default="zero_shot_output.py", help="Path to save output Python file")
+    parser.add_argument("--output", "-o", type=str, default="experiments/baselines/zero_shot_output.py", help="Path to save output Python file")
     parser.add_argument("--mode", type=str, choices=["weak", "strong"], default="strong", help="Baseline mode: 'weak' or 'strong'")
     args = parser.parse_args()
 
