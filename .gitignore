@@ -208,3 +208,7 @@ __marimo__/
 
 temp_workspace/
 run_history/
+
+# Experiments generated results
+experiments/benchmark_results/
+experiments/baselines/
