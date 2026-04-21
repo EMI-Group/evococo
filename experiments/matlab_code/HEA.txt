@@ -1,0 +1,152 @@
+function [non_dominated, hd] = DominationCal_HEA(Objs, zmin, zmax, T)
+% The calculation of hyper-dominance degree
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+% This function is written by Zhe Liu
+
+    %% Normalization the solutions
+    [Objs_num, M] = size(Objs);
+    objs_dominated = zeros(1, Objs_num);
+    hd = zeros(1, Objs_num);
+    NormalizedObj = Objs ./ (zmax - zmin);
+    
+    %% Calculate hyper-dominance degree
+    for i = 1: Objs_num
+        err = NormalizedObj(i, :) - NormalizedObj;
+        eq = zeros(Objs_num, 1);
+        max_err = max(err, [],  2);
+        min_err = min(err, [],  2);
+        H = -min_err ./ max_err;
+        for j = i + 1: Objs_num
+            for k = 1: M
+                if err(j, k) ~= 0
+                    break
+                end
+                if k == M
+                    eq(j) = 1;
+                end
+            end
+        end
+        objs_dominated(eq == 1) = 1;
+        H(eq == 1) = -inf;  
+        H(max_err <= 0) = inf;
+        hd(i) = min(H);
+    end
+    
+    %% Identify dominated solutions
+    objs_dominated(hd < T) = 1;
+    non_dominated = 1 - objs_dominated; 
+end
+
+function [NewPopulation, Population_hd] = EnvironmentalSelection_HEA(Population, hd, zmin, zmax, N, W)
+% The environmental selection of HEA
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+% This function is written by Zhe Liu
+
+    %% Normalization the solutions
+    PopObj = Population.objs;
+    [P, ~] = size(PopObj);
+    zmin       = min(zmin, min(PopObj,[],1));
+    nf         = zmax - zmin;
+    % Avoid dividing by zero
+    nf(nf < 1e-6)   = 1e-6;                     
+    PopObj       = (PopObj - zmin) ./ nf;
+    
+    %% Environmental selection
+    Fitness = pdist2(PopObj,W,'cosine');
+    [~, index] = min(Fitness, [], 1);
+    Chosen = zeros(P, 1);
+    for i = 1: N
+        Chosen(index(i)) = 1;
+    end
+    NewPopulation = Population(Chosen == 1);
+    Population_hd = hd(Chosen == 1);
+    
+    %% Solutions supplement operation
+    K = N - sum(Chosen);
+    for i = 1: K
+        [~, Max_hd_index] = max(hd);
+        NewPopulation = [NewPopulation, Population(Max_hd_index)];
+        Population_hd = [Population_hd, hd(Max_hd_index)];
+        hd(Max_hd_index) = -inf;
+    end
+end
+
+classdef HEA < ALGORITHM
+% <2023> <multi/many> <real/binary/permutation>
+% Hyper-dominance based evolutionary algorithm
+% MaxT --- 0.05 --- The maximum value of tolerance
+
+%------------------------------- Reference --------------------------------
+% Z. Liu, F. Han, Q. Ling, H. Han, and J. Jiang. A many-objective 
+% optimization evolutionary algorithm based on hyper-dominance degree. 
+% Swarm and Evolutionary Computation, 2023, 83: 101411.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+% This function is written by Zhe Liu
+
+    methods
+        function main(Algorithm,Problem)
+            
+            %% Parameter setting
+            MaxT = Algorithm.ParameterSet(0.05);
+            [W, Problem.N] = UniformPoint(Problem.N,Problem.M);
+            T = 0;
+            step = MaxT/(Problem.maxFE / Problem.N);
+            
+            %% Generate random population
+            Population          = Problem.Initialization(); 
+            Solutions =  Population;
+            zmin = min(Population.objs,[],1);
+            zmax = max(max(Population.objs, [], 1), zmin + 1e-6);
+            
+            %% Optimization
+            while Algorithm.NotTerminated(Solutions)       
+                MatingPool = randperm(length(Population));
+                Offsprings = OperatorGA(Problem, Population(MatingPool));
+                Population = [Offsprings, Solutions];  
+                zmin = min(zmin, min(Population.objs,[],1));          
+                [non_dominated, hd] = DominationCal_HEA(Population.objs, zmin, zmax, T);               
+                Population = Population(non_dominated == 1);
+                hd = hd(non_dominated == 1);
+                zmax = max(max(Population.objs, [], 1), zmin + 1e-6);
+                T = T + step;
+                [Solutions, hd] = EnvironmentalSelection_HEA(Population, hd, zmin, zmax, Problem.N, W); 
+                
+                %% Population reselection strategy
+                Population = Solutions;
+                r = unidrnd(Problem.N,[1,Problem.N]);
+                for i = 1: Problem.N
+                    if hd(i) < hd(r(i))
+                        Population(i) = Solutions(r(i));
+                    end
+                end
+            end
+        end
+    end
+end
+

@@ -1,0 +1,239 @@
+function [WMM,VADS] = CalMetric(PopObj,W)
+% Calculate the weighted min-max metric and the vector angle distance
+% scaling metric between each solution and vector
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+	N  = size(PopObj,1);
+    NW = size(W,1);
+
+    %% Normalization
+    Zmax   = max(PopObj,[],1);
+    Zmin   = min(PopObj,[],1);
+    PopObj = (PopObj-repmat(Zmin,N,1))./(repmat(Zmax-Zmin,N,1));
+    W      = 1./(W-repmat(Zmin,NW,1)+eps);
+    
+    %% Calculate WMM
+    WMM = zeros(N,NW);
+    for i = 1 : NW
+        WMM(:,i)  = max(PopObj.*repmat(W(i,:)./norm(W(i,:)),N,1),[],2);
+    end
+    
+    %% Calculate VADS
+    if nargout > 1
+        VADS  = zeros(N,NW);
+        NormP = sqrt(sum(PopObj.^2,2));
+        for i = 1 : NW
+            VADS(:,i) = NormP./(PopObj*W(i,:)'./NormP).^100;
+        end
+    end
+end
+
+function Population = EnvironmentalSelection(Population,Weight,K)
+% The environmental selection in MSOPS-II
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    PopObj = Population.objs;
+    PopCon = Population.cons;
+
+    %% Calculate the metric matrix
+    [WMM,VADS] = CalMetric(PopObj,Weight);
+    S = [WMM,VADS];
+    
+    %% Calculate the aggregate fitness of each solution
+    % Scale each column by the minimum value found
+    [minValue,minIndex] = min(S,[],1);
+    S1 = S./repmat(minValue,size(S,1),1);
+    % Scale the rows which have the minimum value by the second minimum
+    % value
+    for i = 1 : length(minIndex)
+        S1(minIndex(i),i) = S(minIndex(i),i)./min(S([1:minIndex(i)-1,minIndex(i)+1:end],i));
+    end
+    % Calculate the aggregate fitness and sort the solutions
+    r = min(S1,[],2);
+    
+    %% Identify the feasible solutions and the extreme solutions
+    Feasible    = find(all(PopCon<=0,2));
+    [~,extreme] = min(PopObj(Feasible,:),[],1);
+    extreme     = Feasible(extreme);
+    % Decrease the fitness value of extreme solutions so that they can be
+    % selected preferentially
+    r(extreme) = r(extreme) - (max(r)-min(r));
+    % Set the fitness of each infeasible solution to its degree of
+    % constraint violationm, then increase the value so that they will be
+    % selected in the last
+    Infeasible    = find(any(PopCon>0,2));
+    r(Infeasible) = sum(PopCon(Infeasible,:).^2,2) + max(r);
+    
+    %% Select the best N solutions
+    [~,rank] = sort(r);
+    Next     = rank(1:K);
+    % Population for next generation
+    Population = Population(Next);
+end
+
+function Parents = MatingSelection(Population,Archive)
+% The mating selection of MSOPS-II
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    N  = length(Population);
+    NA = length(Archive);
+
+    %% Select one solution in archive for each solution in population
+    Parent1 = randi(NA,1,N);
+    Parent2 = randi(NA,1,N);
+    % Use binary tournament selection to select one solution in archive
+    % which is nearer to the solution in population
+    temp    = rand(1,N) < 0.5;
+    Choose1 = true(N,1);
+    Choose1(temp)  = sum((Archive(Parent1(temp)).objs-Population(temp).objs).^2,2) < sum((Archive(Parent2(temp)).objs-Population(temp).objs).^2,2);
+    Choose1(~temp) = sum((Archive(Parent1(~temp)).decs-Population(~temp).decs).^2,2) < sum((Archive(Parent2(~temp)).decs-Population(~temp).decs).^2,2);
+    MatingPool = [Parent1(Choose1),Parent2(~Choose1)];
+    
+    %% Use each solution in population and each solution in mating pool to generate one offspring
+    Parents = [Population,Archive(MatingPool)];
+end
+
+classdef MSOPSII < ALGORITHM
+% <2007> <multi/many> <real/integer> <constrained/none>
+% Multiple single objective Pareto sampling II
+
+%------------------------------- Reference --------------------------------
+% E. J. Hughes. MSOPS-II: A general-purpose many-objective optimiser.
+% Proceedings of the IEEE Congress on Evolutionary Computation, 2007,
+% 3944-3951.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    methods
+        function main(Algorithm,Problem)
+            %% Generate random population
+            Population = Problem.Initialization();
+            Feasible   = all(Population.cons<=0,2);
+            if any(Feasible)
+                Archive = UpdateArchive([],Population(Feasible),Problem.N);
+                Weight  = UpdateWeight([],Population(Feasible).objs,Problem.N);
+            else
+                [~,best] = min(sum(max(0,Population.cons),2));
+                Archive  = Population(best);
+                Weight   = Population(best).objs;
+            end
+
+            %% Optimization
+            % As the number of solutions in the archive is too large and
+            % uncontrollable, use the population as the final output
+            while Algorithm.NotTerminated(Population)
+                Parents    = MatingSelection(Population,Archive);
+                Offspring  = OperatorGAhalf(Problem,Parents);
+                Feasible   = all(Offspring.cons<=0,2);
+                Archive    = UpdateArchive(Archive,Offspring(Feasible),Problem.N);
+                Weight     = UpdateWeight(Weight,Offspring(Feasible).objs,Problem.N);
+                Population = EnvironmentalSelection([Population,Offspring],Weight,Problem.N);
+            end
+        end
+    end
+end
+
+function Archive = UpdateArchive(Archive,Population,popsize)
+% Update the archive in MSOPS-II
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Combine the archive with the population
+    Archive = [Archive,Population];
+    ArchObj = Archive.objs;
+    N       = length(Archive);
+
+    %% Update the archive by weighted min-max metric
+    % Calculate the weighted min-max metric between each two solutions
+    WMM = CalMetric(ArchObj,ArchObj);
+    WMM_diagonal = WMM(logical(eye(N)))';
+    % Delete the solutions which do not have the lowest metric value than
+    % others according to its own weight vector
+    Remain = true(1,N);
+    for i = 1 : N
+        if Remain(i)
+            if WMM(i,i) > min(WMM(Remain,i))
+                Remain(i) = false;
+            else
+                Remain(WMM(i,:)<WMM_diagonal) = false;
+            end
+        end
+    end
+    Archive = Archive(Remain);
+    % If the archive contains too many solutions, randomly delete some. The
+    % original algorithm does not limit the size of archive, so that the
+    % size of archive will increase unrestrainedly
+    if length(Archive) > 10*popsize
+        Archive = Archive(randperm(length(Archive),5*popsize));
+    end
+end
+
+function Weight = UpdateWeight(Weight,PopObj,K)
+% Update the weight vectors in MSOPS-II
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Normalization
+    W = [Weight;PopObj];
+    [N,M] = size(W);
+    W = W - repmat(min(W,[],1),N,1);
+    W = W./repmat(sqrt(sum(W.^2,2)),1,M);
+    
+    %% Combine weight vectors with the population
+    Weight = [Weight;PopObj];
+    WIndex = 1 : N;
+    % The cosine between each two vectors
+    Cosine = 1 - pdist2(W,W,'cosine');
+    Cosine(logical(eye(length(Cosine)))) = 0;
+    % Reduce the number of vectors
+    while length(WIndex) > K
+        [~,rank] = sortrows(sort(-Cosine(WIndex,WIndex),2));
+        WIndex(rank(1)) = [];
+    end
+    Weight = Weight(WIndex,:);
+end
+

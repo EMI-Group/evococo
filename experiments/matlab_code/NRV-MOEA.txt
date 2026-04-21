@@ -1,0 +1,321 @@
+function [fitness] = fitnessCalculation(PopObjn,Global,Hyperplane_bp)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    [mapPop,Hyperplane] = vertmap(PopObjn,PopObjn,Hyperplane_bp,Global);
+    T = clusterdata(mapPop,'maxclust',size(PopObjn,1),'distance','euclidean','linkage','ward');
+    for c = 1 : size(PopObjn,1)
+        current = find(T == c);
+        pn  = length(current);
+        Ref = sum(mapPop(current,:),1)/pn;
+        d12 = zeros(pn,1);
+        for pc = 1 : pn
+            d1 = norm(Ref-mapPop(current(pc),:));
+            d2 = -(PopObjn(current(pc),:)*Hyperplane-1)./sqrt(sum(Hyperplane.^2));
+            d12(pc) = d1-d2;
+        end
+        [~,ct] = min(d12);
+        choose = current(ct);
+        fitness(choose) = d12;
+        fitness(choose) = sum(PopObjn(choose,:).^2);
+    end
+end
+
+classdef NRVMOEA < ALGORITHM
+% <2024> <multi/many> <real/integer/label/binary/permutation>
+% Adaptive normal reference vector-based multi- and many-objective evolutionary algorithm
+
+%------------------------------- Reference --------------------------------
+% Y. Hua, Q. Liu, and K. Hao. Adaptive normal vector guided evolutionary
+% multi- and many-objective optimization. Complex & Intelligent Systems,
+% 2024, 10: 3709-3726.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+% This function is written by Yicun Hua
+
+    methods
+        function main(Algorithm,Problem)
+            %% Generate random population
+            Population = Problem.Initialization();
+            EP         = [];
+
+            Znadir      = max(Population.objs,[],1);
+            Zmin        = min(Population.objs,[],1);
+            Zmax        = max(Population.objs,[],1);
+            scale       = Zmax-Zmin;
+            Archive     = UpdateArchive(Population,[],Problem.N);
+            extremPoint = ones(Problem.M,Problem.M).*10e30;
+
+            PopObjn       = (Population.objs - Zmin )./scale;
+            ArcObjn       = (Archive.objs - Zmin )./scale;
+            Hyperplane_bp = [];
+
+            [~,Hyperplane_bp] = vertmap(ArcObjn,PopObjn,Hyperplane_bp,Problem);
+            Hyperplane        = Hyperplane_bp;
+
+            %% Optimization
+            while Algorithm.NotTerminated(Population)
+                Archive    = UpdateArchive(Population,Archive,Problem.N);
+                Population = [Population Archive];
+                MatingPool = randi(length(Population),1,Problem.N);
+                Offspring  = OperatorGA(Problem,Population(MatingPool));
+                UniPop     = [Population,Offspring];
+                PopObj     = UniPop.objs;
+                [FrontNo,MaxFNo] = NDSort(PopObj,Problem.N);
+                ParetoP    = find(FrontNo==MaxFNo);
+                chosenPop  = UniPop(FrontNo<MaxFNo);
+                id = find(FrontNo<MaxFNo);
+                id = id(randperm(size(id,2),size(id,2)));
+                otherPopObj = UniPop(id).objs;
+                if size(ParetoP,2) < Problem.M
+                    PopObj  = UniPop([ParetoP id(1:10-size(ParetoP,2))]).objs;
+                    ParetoP = [ParetoP id(1:10-size(ParetoP,2))];
+                else
+                    PopObj = UniPop(ParetoP).objs;
+                end
+                Zmin = min(UniPop.objs,[],1);
+                Zmax = max(PopObj,[],1);
+                Zmin = min([Zmin;PopObj],[],1);
+                [Znadir,extremPoint] = updateNadirPoint(Archive.objs,Zmin,Znadir,extremPoint);
+                if ~mod(Problem.FE,ceil(0.1*Problem.maxFE))
+                    scale = Zmax-Zmin;
+                    scale(scale==0) = 10^(-5);
+                    Hyperplane_bp   = Hyperplane;
+                end
+                scale(scale==0) = 10^(-5);
+                PopObjn = (PopObj-repmat(Zmin,size(PopObj,1),1))./repmat(scale,size(PopObj,1),1);
+                ArcObjn = (Archive.objs-repmat(Zmin,size(Archive.objs,1),1))./repmat(scale,size(Archive.objs,1),1);
+                [mapPop,Hyperplane] = vertmap(ArcObjn,PopObjn,Hyperplane_bp,Problem);
+                try
+                    T = clusterdata(mapPop,'maxclust',Problem.N-length(chosenPop),'distance','euclidean','linkage','ward');
+                catch e
+                    T = clusterdata(PopObjn,'maxclust',Problem.N-length(chosenPop),'distance','euclidean','linkage','ward');
+                end
+                for c = 1 : Problem.N-length(chosenPop)
+                    current = find(T == c);
+                    pn      = length(current);
+                    Ref     = sum(mapPop(current,:),1)/pn;
+                    if pn > 1
+                        d12 = zeros(pn,1);
+                        for pc = 1 : pn
+                            d1 = norm(Ref-mapPop(current(pc),:));
+                            d2 = -(PopObjn(current(pc),:)*Hyperplane-1)./sqrt(sum(Hyperplane.^2));
+                            d12(pc) = d1-d2;
+                        end
+                        [~,ct] = min(d12);
+                        choose = current(ct);
+                    else
+                        choose = current;
+                    end
+                    EP = [EP,UniPop(ParetoP(choose)),chosenPop];
+                    EP = unique(EP);
+                end
+                if length(EP) > Problem.N || Problem.FE >= 0.9*Problem.maxFE
+                    [EPFNo,EPMaxFNo] = NDSort(EP.objs,Problem.N);
+                    EP    = EP(EPFNo<=EPMaxFNo);
+                    EPObj = EP.objs;
+                    [~,Rank]   = sort(EPObj);
+                    Extreme    = zeros(1,Problem.M);
+                    Extreme(1) = Rank(1,1);
+                    for j = 2 : length(Extreme)
+                        k = 1;
+                        Extreme(j) = Rank(k,j);
+                        while ismember(Extreme(j),Extreme(1:j-1))
+                            k = k+1;
+                            Extreme(j) = Rank(k,j);
+                        end
+                    end
+                    EPtemp      = EP(Extreme);
+                    EP(Extreme) = [];
+                    LEP         = length(EP);
+                    Extreme     = [];
+                    for d = 1 : (LEP-Problem.N+length(Extreme))
+                        EPObj   = EP.objs;
+                        dis     = pdist2((EPObj-Zmin)./scale,(EPObj-Zmin)./scale);
+                        dis(logical(eye(length(dis)))) = 10^10;
+                        mindis  = min(dis,[],2);
+                        [~,del] = min(mindis);
+                        EP(del) = [];
+                    end
+                    EP = [EP,EPtemp];
+                end
+                Population = EP;
+                EP         = [];
+                PopObjn    = (Population.objs - Zmin )./scale;
+            end
+        end
+    end
+end
+
+function [ Archive ] = UpdateArchive(Population,Archive,MaxSize)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    Archive   = [Archive,Population];
+    o         = Archive.objs;
+    [c,ia,ic] = unique(o,'rows');
+    Archive   = Archive(ia);
+    ND        = NDSort(Archive.objs,1);
+    Archive   = Archive(ND==1);
+    N         = length(Archive);
+    if N <= MaxSize
+        return;
+    end
+    
+    %% Calculate the fitness of each solution
+    CAObj = Archive.objs;
+    CAObj = (CAObj-repmat(min(CAObj),N,1))./(repmat(max(CAObj)-min(CAObj),N,1));
+    I = zeros(N);
+    for i = 1 : N
+        for j = 1 : N
+            I(i,j) = max(CAObj(i,:)-CAObj(j,:));
+        end
+    end
+    C = max(abs(I));
+    F = sum(-exp(-I./repmat(C,N,1)/0.05)) + 1;
+    
+    %% Delete part of the solutions by their fitnesses
+    Choose = 1 : N;
+    while length(Choose) > MaxSize
+        [~,x] = min(F(Choose));
+        F = F + exp(-I(Choose(x),:)/C(Choose(x))/0.05);
+        Choose(x) = [];
+    end
+    Archive = Archive(Choose);
+
+	%% delete those which are too far from the archive
+    o = Archive.objs;
+    o = o-repmat(min(o),size(o,1),1);
+    d = sqrt(sum(o.^2,2));
+    meanD = sum(d,1)/size(o,1);
+    Archive(d>10*meanD) = [];
+end
+
+function [Znadir,extremPoint] = updateNadirPoint(PopObj,Zideal,Znadir,extremPoint)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    for i = 1 : size(PopObj,1)
+        for j = 1 : size(PopObj,2)
+            asf1 = asfFunction(PopObj(i,:),j,Zideal,Znadir);
+            asf2 = asfFunction(extremPoint(j,:),j,Zideal,Znadir);
+            if asf1 < asf2
+                extremPoint(j,:) = PopObj(i,:);
+            end
+        end
+    end
+
+    % update the nadir point
+    M    = size(PopObj,2);
+    temp = extremPoint - repmat(Zideal,M,1);
+
+    if rank(temp) == size(temp,1)
+        u  = ones(M,M);
+        al = inv(temp)*u;
+        for j = 1 : M
+            aj = 1./al(j,1) + Zideal(j);
+            if (aj > Zideal(j)) && ~isinf(aj) && ~isnan(aj)
+                Znadir(j) = aj;
+            else
+                break;
+            end
+        end
+    else
+        zmax = max(PopObj,[],1);
+        Znadir = zmax;
+    end
+end
+
+function maxValue = asfFunction(sol,index,Zideal,Znadir)
+    epsilon  = 1.0E-6;
+    maxValue = 0;
+    for i = 1 : size(sol,2)
+        val = abs((sol-Zideal)./(Znadir - Zideal));
+        if index ~= i
+            val = val/epsilon;
+        end
+        if val > maxValue
+            maxValue = val;
+        end
+    end
+end
+
+function [mapPop,Hyperplane] = vertmap(ArcObj,PopObj,Hyperplane_bp,Global)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    [N,M]  = size(PopObj);
+    mapPop = zeros(N,M);
+    % Find the extreme points
+    [~,Rank]   = sort(ArcObj,'descend');
+    Extreme    = zeros(1,M);
+    Extreme(1) = Rank(1,1);
+    for j = 2 : length(Extreme)
+        k = 1;
+        Extreme(j) = Rank(k,j);
+        while ismember(Extreme(j),Extreme(1:j-1)) && k < size(Rank,1)
+            k = k+1;
+            Extreme(j) = Rank(k,j);
+        end
+    end
+    % Calculate the hyperplane
+    try
+        if size(ArcObj,1)>=M
+            Hyperplane = ArcObj(Extreme,:)\ones(length(Extreme),1);
+        else
+            Hyperplane = PopObj(Extreme,:)\ones(length(Extreme),1);
+        end
+    catch
+        Hyperplane = ones(M,1);
+    end
+    % Calculate the map point of each solution to the hyperplane
+    if sum(isinf(Hyperplane)) > 0
+        Hyperplane = ones(M,1);
+    elseif sum(isnan(Hyperplane)) > 0
+        Hyperplane = ones(M,1);
+    end
+    for i = 1 : N
+        p  = PopObj(i,:);
+        t1 = sum(p'.*Hyperplane)-1;
+        t2 = sum(Hyperplane.^2);
+        for m = 1 : M
+            mapPop(i,m) = (-Hyperplane(m)*(t1-Hyperplane(m)*p(m))+p(m)*(t2-Hyperplane(m)^2))/t2;
+        end
+    end
+end
+

@@ -1,0 +1,153 @@
+classdef MOPSO < ALGORITHM
+% <2002> <multi> <real/integer>
+% Multi-objective particle swarm optimization
+% div --- 10 --- The number of divisions in each objective
+
+%------------------------------- Reference --------------------------------
+% C. A. Coello Coello and M. S. Lechuga. MOPSO: A proposal for multiple
+% objective particle swarm optimization. Proceedings of the IEEE Congress
+% on Evolutionary Computation, 2002, 1051-1056.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+	methods
+        function main(Algorithm,Problem)
+            %% Parameter setting
+            div = Algorithm.ParameterSet(10);
+
+            %% Generate random population
+            Population = Problem.Initialization();
+            Archive    = UpdateArchive(Population,Problem.N,div);
+            Pbest      = Population;
+
+            %% Optimization
+            while Algorithm.NotTerminated(Archive)
+                REP        = REPSelection(Archive.objs,Problem.N,div);
+                Population = OperatorPSO(Problem,Population,Pbest,Archive(REP));
+                Archive    = UpdateArchive([Archive,Population],Problem.N,div);
+                Pbest      = UpdatePbest(Pbest,Population);
+            end
+        end
+    end
+end
+
+function REP = REPSelection(PopObj,N,div)
+% Select one of the particles in REP as the global best position for each
+% particle
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    NoP = size(PopObj,1);
+    
+    %% Calculate the grid location of each solution
+    fmax = max(PopObj,[],1);
+    fmin = min(PopObj,[],1);
+    d    = (fmax-fmin)/div;
+    fmin = repmat(fmin,NoP,1);
+    d    = repmat(d,NoP,1);
+    GLoc = floor((PopObj-fmin)./d);
+    GLoc(GLoc>=div) = div - 1;
+    GLoc(isnan(GLoc)) = 0;
+    
+    %% Detect the grid of each solution belongs to
+    [~,~,Site] = unique(GLoc,'rows');
+
+    %% Calculate the crowd degree of each grid
+    CrowdG = hist(Site,1:max(Site));
+    
+    %% Roulette-wheel selection
+    TheGrid = RouletteWheelSelection(N,CrowdG);
+    REP     = zeros(1,N);
+    for i = 1 : length(REP)
+        InGrid = find(Site==TheGrid(i));
+        Temp   = randi(length(InGrid));
+        REP(i) = InGrid(Temp);
+    end
+end
+
+function Archive = UpdateArchive(Archive,N,div)
+% Update the archive
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Find the non-dominated solutions
+    Archive = Archive(NDSort(Archive.objs,1)==1);
+    
+    %% Grid-based retention
+    if length(Archive) > N
+        Del = Delete(Archive.objs,length(Archive)-N,div);
+        Archive(Del) = [];
+    end
+end
+
+function Del = Delete(PopObj,K,div)   
+    N = size(PopObj,1);
+
+    %% Calculate the grid location of each solution
+    fmax = max(PopObj,[],1);
+    fmin = min(PopObj,[],1);
+    d    = (fmax-fmin)/div;
+    GLoc = floor((PopObj-repmat(fmin,N,1))./repmat(d,N,1));
+    GLoc(GLoc>=div)   = div - 1;
+    GLoc(isnan(GLoc)) = 0;
+
+    %% Calculate the crowding degree of each grid
+    [~,~,Site] = unique(GLoc,'rows');
+    CrowdG     = hist(Site,1:max(Site));
+
+    %% Delete K solutions
+    Del = false(1,N);
+    while sum(Del) < K
+        % Select the most crowded grid
+        maxGrid = find(CrowdG==max(CrowdG));
+        Temp    = randi(length(maxGrid));
+        Grid    = maxGrid(Temp);
+        % And delete one solution randomly from the grid
+        InGrid  = find(Site==Grid);
+        Temp    = randi([1,length(InGrid)]);
+        p       = InGrid(Temp);
+        Del(p)  = true;
+        Site(p) = NaN;
+        CrowdG(Grid) = CrowdG(Grid) - 1;
+    end
+end
+
+function Pbest = UpdatePbest(Pbest,Population)
+% Update the local best position of each particle
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    temp = Pbest.objs - Population.objs;
+    Dominate = any(temp<0,2) - any(temp>0,2);
+    Pbest(Dominate==-1) = Population(Dominate==-1);
+    temp = rand(length(Dominate),1);
+    Pbest(Dominate==0 & temp<0.5) = Population(Dominate==0 & temp<0.5);
+end
+
