@@ -11,9 +11,14 @@ python -m uvicorn backend.main:app --reload --reload-dir backend --port 8000
 
 **Open the frontend**: Open `frontend/index.html` directly in a browser. The backend must be running first at `http://localhost:8000`.
 
+**Run the batch translator** to convert MATLAB files:
+```bash
+python experiments/batch_translate.py --input_dir ./experiments/matlab_code
+```
+
 **Run the benchmark evaluator** against a directory of generated Python files:
 ```bash
-python evaluation/benchmark.py --dir ./baselines
+python evaluation/benchmark.py --dir ./experiments/benchmark_results
 ```
 
 **Lint code with Ruff** (same codes ignored as the pipeline):

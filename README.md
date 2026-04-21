@@ -51,6 +51,20 @@ http://localhost:8000
 ```
 
 
+## Running Experiments
+
+To run batch translations for MATLAB algorithms to Python, place your MATLAB files in `experiments/matlab_code` and run:
+
+```bash
+python experiments/batch_translate.py --input_dir ./experiments/matlab_code
+```
+
+To evaluate the generated Python files (results are saved in `experiments/benchmark_results` by default):
+
+```bash
+python evaluation/benchmark.py --dir ./experiments/benchmark_results
+```
+
 ## Notes
 
 * The backend **must be running before opening the frontend**.
