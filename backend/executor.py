@@ -205,6 +205,17 @@ def parse_igd_from_stdout(stdout: str) -> list[float]:
     return igds
 
 
+def parse_exec_time_from_stdout(stdout: str) -> float:
+    """Extract Execution time from standard output"""
+    match = re.search(r"Execution time for Gen 2-50.*?:\s*([0-9]*[.]?[0-9]+)s", stdout)
+    if match:
+        try:
+            return float(match.group(1))
+        except:
+            pass
+    return -1.0
+
+
 async def execute_code_trial(
     code_str: str, session_id: str, filename="algo_script.py"
 ) -> dict:
@@ -226,6 +237,8 @@ async def execute_code_trial(
     if len(igds) >= 2 and igds[-1] < igds[0]:
         is_converging = True
 
+    exec_time = parse_exec_time_from_stdout(output)
+
     return {
         "success": success,
         "stdout": output,
@@ -235,4 +248,5 @@ async def execute_code_trial(
         "has_nan": has_nan,
         "is_converging": is_converging,
         "duration": duration,
+        "exec_time": exec_time,
     }

@@ -9,7 +9,8 @@ You will receive a JSON list of candidates. Each candidate contains:
 1.  **Branch ID**: Identifier.
 2.  **Success**: Boolean (True if runtime verified without crash).
 3.  **IGD History**: List of floats (Convergence metric). Lower is better.
-4.  **Source Code**: The actual Python implementation.
+4.  **Execution Time**: Float (`exec_time`), time in seconds. Lower is better. (-1.0 means failed/not recorded).
+5.  **Source Code**: The actual Python implementation.
 
 **[CANDIDATE DATA START]**
 {candidates_list}
@@ -28,10 +29,11 @@ You will receive a JSON list of candidates. Each candidate contains:
 * **Threshold**: A difference of **< 0.03** in final IGD is considered "Tie".
 * Example: IGD 0.050 and IGD 0.065 are considered **Performance Equivalent**.
 
-**3. Tensorization Degree (The Deciding Factor)**
-* **This is the MOST IMPORTANT tie-breaker.**
-* **The "0.06 Rule"**: If Branch A has IGD=0.05 (but uses Python `for` loops) and Branch B has IGD=0.06 (but uses elegant `torch.einsum`/`broadcasting`), **YOU MUST PICK BRANCH B**.
-* **Rationale**: We prefer code that is cleaner, faster on GPU, and more PyTorch-native, even if it converges slightly slower in this specific small-scale trial.
+**3. Tensorization Degree & Execution Speed (The Deciding Factors)**
+* **These are EQUALLY IMPORTANT tie-breakers.**
+* **Execution Speed (`exec_time`)**: Since the trial only runs once, `exec_time` is a useful reference but may have variance. A significantly faster time often indicates better parallelization.
+* **Tensorization**: We strongly prefer code that is cleaner, faster on GPU, and more PyTorch-native.
+* **The "0.06 Rule"**: If Branch A has IGD=0.05 (but uses Python `for` loops / slower execution) and Branch B has IGD=0.06 (but uses elegant `torch.einsum`/`broadcasting` / faster execution), **YOU MUST PICK BRANCH B**.
 * **Penalty**: Heavy penalty for explicitly looping over population indices (e.g., `for i in range(N):`).
 * **Reward**: Reward uses of `torch.where`, `masked_fill`, `cdist`, and logic that handles the whole batch at once.
 

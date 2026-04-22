@@ -268,6 +268,7 @@ async def run_single_branch_lifecycle(
                         "code": current_code,
                         "igd": best_igd_in_branch,
                         "igd_history": best_history,
+                        "exec_time": report.get("exec_time", -1.0),
                         "branch_idx": branch_idx,
                     }
                 else:
@@ -306,6 +307,7 @@ async def run_single_branch_lifecycle(
             "code": current_code,
             "igd": float("inf"),
             "igd_history": [],
+            "exec_time": -1.0,
             "branch_idx": branch_idx,
         }
 
@@ -318,6 +320,7 @@ async def run_single_branch_lifecycle(
             "code": current_code,
             "igd": float("inf"),
             "igd_history": [],
+            "exec_time": -1.0,
             "branch_idx": branch_idx,
         }
 
@@ -524,6 +527,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                     "success": res["success"],
                     "final_igd": res["igd"],
                     "igd_history": res["igd_history"],
+                    "exec_time": res.get("exec_time", -1.0),
                     "code_snippet": res["code"],
                 }
             )
