@@ -45,6 +45,10 @@ Follow this coding style (imports, Mutable usage, class structure).
 6.  **No Extra Loops**:
     - Do NOT introduce new Python `for`/`while` loops beyond what the Blueprint explicitly requires.
     - Prefer vectorized tensor operations over Python loops.
+7.  **JIT COMPLIANCE (CRITICAL)**:
+    - The output code will be compiled using `torch.compile()`.
+    - You MUST NOT use `.item()`, `.tolist()`, or `.cpu().numpy()` anywhere, as they force graph breaks.
+    - You MUST NOT use data-dependent control flow, such as `for` loops whose iteration count or break conditions depend on dynamic tensor sizes or masks. Use fully vectorized operations (e.g., `torch.where`, `torch.topk`, `torch.argsort`) instead.
 
 ## Output Contract
 Output **ONLY** the raw Python code. Do not wrap in Markdown fences (like ```python) if possible.
