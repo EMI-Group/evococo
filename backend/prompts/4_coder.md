@@ -45,6 +45,10 @@ Follow this coding style (imports, Mutable usage, class structure).
 6.  **No Extra Loops**:
     - Do NOT introduce new Python `for`/`while` loops beyond what the Blueprint explicitly requires.
     - Prefer vectorized tensor operations over Python loops.
+7.  **JIT COMPLIANCE (CRITICAL)**:
+    - The output code will be compiled using `torch.compile()`.
+    - You MUST NOT use `.item()`, `.tolist()`, or `.cpu().numpy()` anywhere, as they force graph breaks.
+    - You MUST NOT use data-dependent control flow, such as `for` loops whose iteration count or break conditions depend on dynamic tensor sizes or masks. Use fully vectorized operations (e.g., `torch.where`, `torch.topk`, `torch.argsort`) instead.
 
 ## Output Contract
 Output **ONLY** the raw Python code. Do not wrap in Markdown fences (like ```python) if possible.
@@ -101,12 +105,13 @@ class <YourAlgoName>(Algorithm):
 # === FIXED DEMO BLOCK ===
 # This block MUST be appended at the end of the file.
 if __name__ == "__main__":
+    import time
     import torch
     from evox.metrics import igd
     from evox.problems.numerical import DTLZ2
     from evox.workflows import StdWorkflow
 
-    torch.set_default_device("cpu")
+    torch.set_default_device("cuda")
 
     # <YourAlgoName> must be replaced by your actual class name
     algo = <YourAlgoName>(pop_size=100, n_objs=3, lb=-torch.zeros(12), ub=torch.ones(12))
@@ -114,9 +119,16 @@ if __name__ == "__main__":
     pf = prob.pf()
     workflow = StdWorkflow(algo, prob)
     workflow.init_step()
-    jit_state_step = workflow.step
+    jit_state_step = torch.compile(workflow.step)
 
-    for i in range(50):
+    # 1. Trigger JIT compilation (First step)
+    jit_state_step()
+
+    # 2. Pure execution (Remaining 49 steps)
+    torch.cuda.synchronize()
+    exec_start = time.perf_counter()
+
+    for i in range(1, 50):
         jit_state_step()
 
         if (i + 1) % 5 == 0:
@@ -124,3 +136,7 @@ if __name__ == "__main__":
             # Simple NaN filtering for metric calculation
             fit = fit[~torch.any(torch.isnan(fit), dim=1)]
             print(f"Gen {i + 1} IGD: {igd(fit, pf)}")
+
+    torch.cuda.synchronize()
+    exec_time = time.perf_counter() - exec_start
+    print(f"Execution time for Gen 2-50 (49 steps): {exec_time:.4f}s (Avg: {exec_time / 49:.4f}s/gen)")

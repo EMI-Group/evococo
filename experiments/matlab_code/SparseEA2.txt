@@ -1,0 +1,224 @@
+function [Population,Dec,Mask,FrontNo,CrowdDis] = EnvironmentalSelection(Population,Dec,Mask,N)
+% The environmental selection of SparseEA2
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Delete duplicated solutions
+    [~,uni] = unique(Population.objs,'rows');
+    Population = Population(uni);
+    Dec        = Dec(uni,:);
+    Mask       = Mask(uni,:);
+    N          = min(N,length(Population));
+
+    %% Non-dominated sorting
+    [FrontNo,MaxFNo] = NDSort(Population.objs,Population.cons,N);
+    Next = FrontNo < MaxFNo;
+    
+    %% Calculate the crowding distance of each solution
+    CrowdDis = CrowdingDistance(Population.objs,FrontNo);
+    
+    %% Select the solutions in the last front based on their crowding distances
+    Last     = find(FrontNo==MaxFNo);
+    [~,Rank] = sort(CrowdDis(Last),'descend');
+    Next(Last(Rank(1:N-sum(Next)))) = true;
+    
+    %% Population for next generation
+    Population = Population(Next);
+    FrontNo    = FrontNo(Next);
+    CrowdDis   = CrowdDis(Next);
+    Dec        = Dec(Next,:);
+    Mask       = Mask(Next,:);
+end
+
+function [Offspring,outIndexList,chosengroups] = GLP_OperatorGAhalf(Problem,Parent1,Parent2,numberOfGroups)
+% Parent1 and Parent2 are the matrix of decision variables, not solutions
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Parameter setting
+    [proC,disC,~,disM] = deal(1,20,1,20);
+    [N,D] = size(Parent1);
+    
+    %% Genetic operators for real encoding
+    beta = zeros(N,D);
+    mu   = rand(N,D);
+    beta(mu<=0.5) = (2*mu(mu<=0.5)).^(1/(disC+1));
+    beta(mu>0.5)  = (2-2*mu(mu>0.5)).^(-1/(disC+1));
+    beta = beta.*(-1).^randi([0,1],N,D);
+    beta(rand(N,D)<0.5) = 1;
+    beta(repmat(rand(N,1)>proC,1,D)) = 1;
+    Offspring = (Parent1+Parent2)/2+beta.*(Parent1-Parent2)/2;
+    Lower = repmat(Problem.lower,N,1);
+    Upper = repmat(Problem.upper,N,1);
+    [outIndexList,~] = CreateGroups(numberOfGroups,Offspring,D); 
+    chosengroups = randi(numberOfGroups,size(outIndexList,1),1);
+    Site = outIndexList == chosengroups;
+    mu   = rand(N,1);
+    mu   = repmat(mu,1,D);
+    temp = Site & mu<=0.5;
+    Offspring       = min(max(Offspring,Lower),Upper);
+    Offspring(temp) = Offspring(temp)+(Upper(temp)-Lower(temp)).*((2.*mu(temp)+(1-2.*mu(temp)).*...
+                      (1-(Offspring(temp)-Lower(temp))./(Upper(temp)-Lower(temp))).^(disM+1)).^(1/(disM+1))-1);
+    temp = Site & mu>0.5;
+    Offspring(temp) = Offspring(temp)+(Upper(temp)-Lower(temp)).*(1-(2.*(1-mu(temp))+2.*(mu(temp)-0.5).*...
+                      (1-(Upper(temp)-Offspring(temp))./(Upper(temp)-Lower(temp))).^(disM+1)).^(1/(disM+1)));    
+end
+
+
+function [outIndexArray,numberOfGroupsArray] = CreateGroups(numberOfGroups, xPrime, numberOfVariables)
+% Creat groups by ordered grouping
+
+    outIndexArray = [];
+    numberOfGroupsArray = [];
+    noOfSolutions = size(xPrime,1);
+    for sol = 1:noOfSolutions        
+        varsPerGroup = floor(numberOfVariables/numberOfGroups);
+        vars = xPrime(sol,:);
+        [~,I] = sort(vars);
+        outIndexList = ones(1,numberOfVariables);
+        for i = 1:numberOfGroups-1
+            outIndexList(I(((i-1)*varsPerGroup)+1:i*varsPerGroup)) = i;
+        end
+        outIndexList(I(((numberOfGroups-1)*varsPerGroup)+1:end)) = numberOfGroups;    
+        outIndexArray = [outIndexArray;outIndexList];
+        numberOfGroupsArray = [numberOfGroupsArray;numberOfGroups];    
+    end
+end
+
+function [OffDec,OffMask] = Operator(Problem,ParentDec,ParentMask,Fitness)
+% The operator of SparseEA2
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Parameter setting
+    [N,~]       = size(ParentDec);
+    Parent1Dec  = ParentDec(1:floor(end/2),:);
+    Parent2Dec  = ParentDec(floor(end/2)+1:floor(end/2)*2,:);
+    Parent1Mask = ParentMask(1:floor(end/2),:);
+    Parent2Mask = ParentMask(floor(end/2)+1:floor(end/2)*2,:);
+    
+     %% Crossover and mutation for dec
+     if any(Problem.encoding~=4)
+         [OffDec,groupIndex,chosengroups] = GLP_OperatorGAhalf(Problem,Parent1Dec,Parent2Dec,4);	% 4 -- numberofgroups
+         OffDec(:,Problem.encoding==4) = 1;
+     else
+         OffDec = ones(size(Parent1Dec));
+     end
+            
+    %% Crossover for mask
+    OffMask = Parent1Mask;
+    for i = 1 : N/2
+        if rand < 0.5
+            index = find(Parent1Mask(i,:)&~Parent2Mask(i,:));
+            index = index(TS(-Fitness(index)));
+            OffMask(i,index) = 0;
+        else
+            index = find(~Parent1Mask(i,:)&Parent2Mask(i,:));
+            index = index(TS(Fitness(index)));
+            OffMask(i,index) = Parent2Mask(i,index);
+        end
+    end
+    
+    %% Mutation for mask
+    if any(Problem.encoding~=4)
+        chosenindex = groupIndex == chosengroups;
+        for i = 1 : N/2
+            if rand < 0.5
+                index = find(OffMask(i,:)&chosenindex(i,:));
+                index = index(TS(-Fitness(index)));
+                OffMask(i,index) = 0;
+            else
+                index = find(~OffMask(i,:)&chosenindex(i,:));
+                index = index(TS(Fitness(index)));
+                OffMask(i,index) = 1;
+            end
+        end                    
+    end       
+end
+
+function index = TS(Fitness)
+% Binary tournament selection
+    if isempty(Fitness)
+        index = [];
+    else
+        index = TournamentSelection(2,1,Fitness);
+    end
+end
+
+classdef SparseEA2 < ALGORITHM
+% <2023> <multi> <real/integer/binary> <large/none> <constrained/none> <sparse>
+% Improved SparseEA
+
+%------------------------------- Reference --------------------------------
+% Y. Zhang, Y. Tian, and X. Zhang. Improved SparseEA for sparse large-scale
+% multi-objective optimization problems. Complex & Intelligent Systems,
+% 2023, 9: 1127-1142.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    methods
+        function main(Algorithm,Problem)
+            %% Population initialization
+            % Calculate the fitness of each decision variable
+            TDec    = [];
+            TMask   = [];
+            TempPop = [];
+            Fitness = zeros(1,Problem.D);
+            for i = 1 : 1+4*any(Problem.encoding~=4)
+                Dec = unifrnd(repmat(Problem.lower,Problem.D,1),repmat(Problem.upper,Problem.D,1));
+                Dec(:,Problem.encoding==4) = 1;
+                Mask       = eye(Problem.D);
+                Population = Problem.Evaluation(Dec.*Mask);
+                TDec       = [TDec;Dec];
+                TMask      = [TMask;Mask];
+                TempPop    = [TempPop,Population];
+                Fitness    = Fitness + NDSort([Population.objs,Population.cons],inf);
+            end
+            % Generate initial population
+            Dec = unifrnd(repmat(Problem.lower,Problem.N,1),repmat(Problem.upper,Problem.N,1));
+            Dec(:,Problem.encoding==4) = 1;
+            Mask = false(Problem.N,Problem.D);
+            for i = 1 : Problem.N
+                Mask(i,TournamentSelection(2,ceil(rand*Problem.D),Fitness)) = 1;
+            end
+            Population = Problem.Evaluation(Dec.*Mask);
+            [Population,Dec,Mask,FrontNo,CrowdDis] = EnvironmentalSelection([Population,TempPop],[Dec;TDec],[Mask;TMask],Problem.N);
+
+            %% Optimization
+            while Algorithm.NotTerminated(Population)
+                MatingPool       = TournamentSelection(2,2*Problem.N,FrontNo,-CrowdDis);
+                [OffDec,OffMask] = Operator(Problem,Dec(MatingPool,:),Mask(MatingPool,:),Fitness);
+                Offspring        = Problem.Evaluation(OffDec.*OffMask);
+                [Population,Dec,Mask,FrontNo,CrowdDis] = EnvironmentalSelection([Population,Offspring],[Dec;OffDec],[Mask;OffMask],Problem.N);
+            end
+        end
+    end
+end
+

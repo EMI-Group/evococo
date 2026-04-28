@@ -17,7 +17,12 @@ MODEL_NAME = os.getenv("OPENAI_MODEL")
 TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
 
 # 3. Initialize OpenAI Async Client
-client = AsyncOpenAI(api_key=API_KEY, base_url=BASE_URL)
+client = AsyncOpenAI(
+    api_key=API_KEY, 
+    base_url=BASE_URL,
+    timeout=120.0,
+    max_retries=3
+)
 
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
 

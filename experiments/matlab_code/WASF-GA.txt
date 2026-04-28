@@ -1,0 +1,181 @@
+function [Population, FrontNo, CrowdDis] = EnvironmentalSelectionW(Vectores, Population, nsort, Point, ro)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Non-dominated sorting
+    [FrontNo,MaxFNo] = WASFGASort(Vectores, Population.objs, nsort, Point, ro);
+    Next = FrontNo < MaxFNo;
+
+    %% Calculate the crowding distance of each solution
+    CrowdDis = CrowdingDistance(Population.objs, FrontNo);
+
+    %% Select the solutions in the last front by their crowding distances
+    Last        = find(FrontNo == MaxFNo);
+    [~,Rank]    = sort(CrowdDis(Last), 'descend');
+    numSelected = min(nsort - sum(Next), numel(Last));  % Avoid selecting more than available
+    Next(Last(Rank(1:numSelected))) = true;
+
+    %% Population for next generation
+    Population = Population(Next);
+    FrontNo    = FrontNo(Next);
+    CrowdDis   = CrowdDis(Next);
+end
+
+function weightVectors = generateWeightVectors2(Nmu, epsilon)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    % Initialize weight vectors matrix
+    weightVectors = zeros(Nmu, 2);
+
+    % Generate weight vectors
+    for j = 1 : Nmu
+        uj1 = epsilon + (j - 1) * (1 - 2 * epsilon) / (Nmu - 1);
+        uj2 = 1 - uj1;
+        weightVectors(j, :) = [uj1, uj2];
+    end
+end
+
+classdef WASFGA < ALGORITHM
+% <2015> <multi> <real/integer/label/binary/permutation>
+% Weighting achievement scalarizing function genetic algorithm
+% Point --- --- Preferred point
+
+%------------------------------- Reference --------------------------------
+% A. B. Ruiz, R. Saborido, and M. Luque. A preference-based evolutionary
+% algorithm for multiobjective optimization: the weighting achievement
+% scalarizing function genetic algorithm. Journal of Global Optimization,
+% 2015, 62: 101-129.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    methods
+        function main(Algorithm,Problem)
+            %% Parameter setting
+            Point = Algorithm.ParameterSet(zeros(1,Problem.M)+0.5,0.00001);
+            ro    = 0.0001;
+
+            %% Generate random population
+            Population = Problem.Initialization();
+
+            %% Generate a sample of weight vectors
+            [n,~] = size(Population.objs);
+            if Problem.M == 2
+                Vectors = generateWeightVectors2(n, 0.001);
+            else
+                [Vectors,Problem.N] = UniformPoint(Problem.N,Problem.M);
+            end
+            FrontNo  = WASFGASort(Vectors, Population.objs, inf, Point,ro);
+            CrowdDis = CrowdingDistance(Population.objs,FrontNo);
+            [v,~] = size(Vectors);
+            if v >= n
+                nsort = 2;
+            else
+                nsort = floor(n/v) + 1;
+            end
+
+            %% Optimization
+            while Algorithm.NotTerminated(Population)
+                MatingPool = TournamentSelection(2,Problem.N,FrontNo,-CrowdDis);
+                Offspring  = OperatorGA(Problem,Population(MatingPool));
+                [Population,FrontNo,CrowdDis] = EnvironmentalSelectionW(Vectors, [Population,Offspring],nsort,Point,ro);
+            end
+        end
+    end
+end
+
+function [FrontNo,MaxFNo] = WASFGASort(Vectors, PopObj, nsort, Point, ro)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    [nvectors,~] = size(Vectors);
+    [Loc,MaxFNo] = frontsclass(Vectors, PopObj,inf, Point, ro);
+    [popsize,~]  = size(PopObj);
+    FrontNo      = inf(1,size(PopObj,1));
+
+    for i = 1 : popsize
+        Position = find(Loc == i);
+        iter = 0;
+        while nvectors*iter < Position
+            iter = iter + 1;
+        end
+        if iter == 0 || iter > nsort
+            FrontNo(i) = inf;
+        else
+            FrontNo(i) = iter;
+        end
+    end
+end
+
+function [Loc, Max] = frontsclass(Vectors, PopObj, nsort, Point, ro)
+    [nvectors,~] = size(Vectors);
+    [N,~]  = size(PopObj);
+    FrontG = [];
+    % SolG will store the different solutions sorted by the achievement
+    % scalarizing function
+    SolG    = [];
+    PopObj2 = PopObj;
+    Max     = 0;
+    while length(FrontG) < N && Max < nsort
+        % n will be the size of the population that will be compared in
+        % each iteration, it will change in every iteration.
+        [n,~] = size(PopObj);
+        Max   = Max + 1;
+        for i = 1 : min(nvectors, n)
+            Front  = [];
+            Values = zeros(n, 1);
+            for j = 1 : n
+                Values(j) = max((PopObj(j, :) - Point) .* Vectors(i, :)) + ro * sum(Vectors(i, :) .* (PopObj(j, :) - Point));
+            end
+            Vmin      = min(Values);
+            Sol1      = find(Values == Vmin);
+            Front     = [Front, Sol1(1)];
+            FrontG    = [FrontG, Front];
+            valid_Loc = Front(Front <= size(PopObj, 1));
+            SolG      = [SolG; PopObj(valid_Loc, :)];
+            PopObj(valid_Loc,:) = [];
+            [n,~]     = size(PopObj);
+        end
+    end
+    Loc = find_Loc(SolG, PopObj2);
+end
+
+function index = find_Loc(rows, initial_matrix)
+% Identify the position in the original matrix of the solutions in SolG
+
+    index = zeros(size(rows, 1), 1);
+    for i = 1 : size(rows, 1)
+        [equalrow,loc] = ismember(rows(i, :), initial_matrix, 'rows');
+        if equalrow
+            index(i) = loc;
+        end
+    end
+end
+

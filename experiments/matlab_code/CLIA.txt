@@ -1,0 +1,3456 @@
+function varargout = cascade_cluster(P, Z, MtcStr, N, cat_flag)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+%% split the population
+[O, ia, ~] = unique([P.objs], 'rows');
+P = P(ia);
+[index_frontier, NF_index] = find_frontiers(O, [P.cons]);
+O = normalization(O);
+%% attach frontiers to nearest reference vectors
+if strcmp(MtcStr, 'PBI')
+    error_type = 'distance';
+elseif strcmp(MtcStr, 'PDM')
+    error_type = 'sin';
+end
+[min_metric, allocation] = pair(O(index_frontier, :), Z, error_type);
+%% identify the active reference vectors and create clusters
+index_active_cluster = unique(allocation);
+NC = numel(index_active_cluster);
+cluster.center = []; cluster.queue_select = [];
+clusters = repmat(cluster, NC, 1);
+%% calculate metric and sort the frontier solutions
+for i = 1: NC
+    I = index_active_cluster(i);
+    small_index = (allocation == I);
+    index_cluster_frontier = index_frontier(small_index);
+    if numel(index_cluster_frontier) == 1
+        index_ascend = 1;
+    else
+        if strcmp(MtcStr, 'PBI')
+            F_metric = 5 * min_metric(small_index)' + sum(O(index_cluster_frontier, :) .* repmat(Z(I, :), numel(index_cluster_frontier), 1), 2)' ./ repmat(norm(Z(I, :)), 1, numel(index_cluster_frontier));
+        elseif strcmp(MtcStr, 'PDM')
+            F_metric = 5 * (min_metric(small_index) .* sqrt(sum(O(index_cluster_frontier, :) .^ 2, 2)))' + mean(O(index_cluster_frontier, :), 2)';
+        end
+        if NC >= N
+            [~, index_ascend] = min(F_metric);
+        else
+            [~, index_ascend] = sort(F_metric, 'ascend');
+        end
+    end
+    clusters(i).queue_select = index_cluster_frontier(index_ascend);
+    clusters(i).center = clusters(i).queue_select(1);
+end
+%% Attach the non-frontiers and sort
+center_index = [clusters.center];
+if nargout == 2
+    CF = P(center_index);
+end
+if NC > N
+    P = crowding_pick(P(center_index), N, 'precise');
+elseif NC == N
+    P = P(center_index);
+else
+    if cat_flag || numel(index_frontier) < N
+        C = O(center_index, :);
+        Distance2Centers = pdist2(O(NF_index, :), C, 'euclidean');
+        [min_distance, allocation] = min(Distance2Centers, [], 2);
+        active_clusters_with_NF_index = unique(allocation);
+        for i = 1: numel(active_clusters_with_NF_index)
+            I = active_clusters_with_NF_index(i);
+            Cluster_NF_index = NF_index(allocation == I);
+            NF_distance = min_distance(allocation == I);
+            [~, index_ascend] = sort(NF_distance, 'ascend');
+            clusters(I).queue_select = [clusters(I).queue_select, Cluster_NF_index(index_ascend)];
+        end
+    end
+    %% Round-robin Picking
+    j = 1;
+    next_pop_index = zeros(1, N);
+    clusters = clusters(randperm(NC));
+    for pointer = 1: N
+        while isempty(clusters(j).queue_select)
+            j = mod(j, NC) + 1;
+        end
+        next_pop_index(pointer) = clusters(j).queue_select(1);
+        clusters(j).queue_select(1) = [];
+        j = mod(j, NC) + 1;
+    end
+    P = P(next_pop_index);
+end
+varargout{1} = P;
+if nargout == 2
+    varargout{2} = CF;
+elseif nargout == 3
+    varargout{2} = index_active_cluster;
+    varargout{3} = setdiff(1: size(Z, 1), index_active_cluster);
+end
+end
+
+classdef CLIA < ALGORITHM
+% <2019> <multi/many> <real/integer/label/binary/permutation>
+% Evolutionary algorithm with cascade clustering and reference point incremental learning
+
+%------------------------------- Reference --------------------------------
+% H. Ge, M. Zhao, L. Sun, Z. Wang, G. Tan, Q. Zhang, and C. L. P. Chen. A
+% many-objective evolutionary algorithm with two interacting processes:
+% Cascade clustering and reference point incremental learning. IEEE
+% Transactions on Evolutionary Computation, 2019, 23(4): 572-586.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    methods
+        function main(Algorithm,Problem)
+            global stable_threshold delta crowding_pick_flag;
+            [stable_threshold, delta] = Algorithm.ParameterSet([0, 0, 0], 2 * Problem.N);
+            [Z, P, A, S, SVM] = initialize(Problem);
+            while Algorithm.NotTerminated(S)
+                MatingPool = TournamentSelection(2, Problem.N, sum(max(0, P.cons), 2)); 
+                Offspring  = OperatorGA(Problem,P(MatingPool));
+                A = update_archive(A, [P, Offspring], Z, ceil(0.33 * Problem.M * Problem.N), Problem);
+                % SELECTION OF INDIVIDUALS
+                [P, ICA, ICN] = cascade_cluster([P, Offspring], Z, 'PDM', Problem.N, Problem.FE < Problem.maxFE);
+                % ADAPTATION OF REFERENCE VECTORS     
+                [Z, SVM] = incremental_learn(Z, ICA, ICN, A, SVM, Problem);
+                if Problem.FE >= Problem.maxFE && crowding_pick_flag
+                    S = crowding_pick(update_archive(A, P, Z, [], Problem), Problem.N, 'precise');
+                else
+                    S = P;
+                end
+            end
+        end
+    end
+end
+
+function frontiers_picked = crowding_pick(archive, picks, mode)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+if numel(archive) < picks
+    frontiers_picked = archive;
+else
+    O = normalize([archive.objs]);
+    if strcmp(mode, 'precise')
+        index_pick = true(1, numel(archive));
+        while numel(find(index_pick == true)) > picks % Optimizable
+            CD = NaN(1, numel(archive));
+            CD(index_pick) = crowding_dist(O);
+            [~, index] = min(CD);
+            index_pick(index) = false;
+            O = normalization([archive(index_pick).objs]);
+        end
+        frontiers_picked = archive(index_pick);
+    elseif strcmp(mode, 'fast')
+        CD = crowding_dist(O);
+        [~, I] = sort(CD, 'descend');
+        frontiers_picked = archive(I(1: picks));
+    end
+end
+end
+
+function CD = crowding_dist(O)
+[N, M] = size(O);
+CD = zeros(1, N);
+Fmax = max(O, [], 1);
+Fmin = min(O, [], 1);
+for i = 1: M
+    [~, Rank] = sort(O(:, i));
+    CD(Rank(1)) = inf;
+    CD(Rank(end)) = inf;
+    for j = 2 : N - 1
+        CD(Rank(j)) = CD(Rank(j)) + (O(Rank(j + 1), i) - O(Rank(j - 1), i)) / (Fmax(i) - Fmin(i));
+    end
+end
+end
+
+function [F_index, NF_index] = find_frontiers(PopObj, PopCon)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+	perm_index = randperm(size(PopObj, 2));
+	PopObj = PopObj(:, perm_index);
+	Infeasible = any(PopCon>0, 2);
+	PopObj(Infeasible,:) = repmat(max(PopObj,[],1),sum(Infeasible),1) + repmat(sum(max(0,PopCon(Infeasible,:)),2),1,size(PopObj,2));
+ [PopObj, ~, Loc] = unique(PopObj,'rows');
+ [N,M] = size(PopObj);
+ [PopObj,rank] = sortrows(PopObj);
+ FrontNo = inf(1,N);
+ MaxFNo = 1;
+ for i = 1 : N
+ if FrontNo(i) == inf
+ Dominated = false;
+ for j = i-1 : -1 : 1
+ if FrontNo(j) == MaxFNo
+ m = 2;
+ while m <= M && PopObj(i, m) >= PopObj(j, m)
+ m = m + 1;
+ end
+ Dominated = m > M;
+ if Dominated || M == 2
+ break;
+ end
+ end
+ end
+ if ~Dominated
+ FrontNo(i) = MaxFNo;
+ end
+ end
+ end
+ FrontNo(rank) = FrontNo;
+ FrontNo = FrontNo(Loc);
+ F_index = find(FrontNo == 1);
+ NF_index = setdiff(1: size(PopObj, 1), F_index);
+end
+
+function [Z, active_Z] = generate_reference(PopObj, original_active_number, Global, action, mode)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+global LEARNING_DISABLE_FLAG;
+if strcmp(mode, 'strict')
+    active_number = 0;
+    PopObj = normalization(PopObj);
+    active_Z = [];
+    while active_number < original_active_number
+        instructed_action = action;
+        [Z, received_action] = generate_Z(Global, instructed_action, 'commit');
+        Z = unique([Z; active_Z], 'rows');
+        [~, Allocation] = pair(PopObj, Z, 'sin');
+        active_index = unique(Allocation);
+        active_Z = Z(active_index, :);
+        active_number = size(active_Z, 1);
+        fprintf('%d(+%d)\n', active_number, numel(active_index)); % TODO
+        if received_action ~= instructed_action
+            LEARNING_DISABLE_FLAG = true;
+            warning('reference generation malfunctions');
+            break;
+        end
+    end
+elseif strcmp(mode, 'normal')
+    Z = generate_Z(Global, action, 'commit');
+    active_Z = [];
+end
+end
+
+function varargout = generate_Z(Global, action, commit_str)
+global MAX_REFERENCE_NUM_FLAG current_density reference_generation_intial_flag;
+persistent incremental_sequence pointer;
+if reference_generation_intial_flag == true
+    MAX_REFERENCE_NUM_FLAG = false;
+    incremental_sequence = density_sequence(Global.M);
+    pointer = 1;
+    reference_generation_intial_flag = false;
+    % TRIM
+    TRIM_INDEX = find(incremental_sequence < Global.N);
+    incremental_sequence(TRIM_INDEX(1: end)) = [];
+end
+original_pointer = pointer;
+pointer = pointer + action;
+if pointer >= numel(incremental_sequence)
+    MAX_REFERENCE_NUM_FLAG = true;
+end
+pointer = min(numel(incremental_sequence), pointer);
+pointer = max(1, pointer);
+real_action = pointer - original_pointer;
+
+Z = UniformPoint(incremental_sequence(pointer), Global.M);
+current_density = size(Z, 1);
+
+if ~strcmp(commit_str, 'commit')
+    pointer = original_pointer;
+end
+
+varargout{1} = Z;
+if nargout >= 2
+    varargout{2} = real_action;
+end
+end
+
+function incremental_sequence = density_sequence(M)
+incremental_sequence = [];
+R_MAX = 1e6;
+step = 1;
+R = nchoosek(M + step - 1, step);
+while R < R_MAX
+    incremental_sequence = [incremental_sequence, R];
+    step = step + 1;
+    R = nchoosek(M + step - 1, step);
+end
+end
+
+function [Z, SVM] = incremental_learn(Z, active_clusters_index, index_inactive_clusters, frontiers, SVM, Problem)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+global MAX_REFERENCE_NUM_FLAG MAX_ARCHIVE_SIZE disable_flag normalization_str delta learning_initial_flag;
+if learning_initial_flag == true
+    learning_initial_flag = false;
+    MAX_ARCHIVE_SIZE = ceil(0.33 * Problem.M * Problem.N);
+end
+if disable_flag && numel(frontiers) > 0.9 * MAX_ARCHIVE_SIZE || numel(active_clusters_index) > 0.95 * Problem.N && size(Z, 1) == Problem.N
+    return;
+end
+status = check_status(size(Z, 1), active_clusters_index, index_inactive_clusters, Problem);
+if strcmp(status, 'unstable') || numel(frontiers) < 0.9 * MAX_ARCHIVE_SIZE
+    return;
+end
+if numel(active_clusters_index) > Problem.N && numel(active_clusters_index) == size(Z, 1)
+    Z = generate_reference([], 0, Problem, -1, 'normal');
+elseif numel(active_clusters_index) < 0.95 * Problem.N
+    if MAX_REFERENCE_NUM_FLAG
+        return;
+    end
+    [~, allocation] = pair([frontiers.objs], Z, 'sin');
+    Z_active_old = Z(unique(allocation), :);
+    [Z, ~] = generate_reference([frontiers.objs], numel(active_clusters_index), Problem, 1, 'normal');
+    if strcmp(normalization_str, 'normalize')
+        if size(Z, 1) > 4 * Problem.N
+            normalization_str = '';
+            [~, allocation] = pair([frontiers.objs], Z, 'sin');
+            index_inactive_clusters = setdiff(1: size(Z, 1), unique(allocation));
+            P = truncate([frontiers.objs]); N = truncate(Z(index_inactive_clusters, :));
+            SVM = learn(P, N, SVM, 'svmtrain2');
+            Z_next = reduce_useless(Z, delta, SVM, Problem);
+        else
+            Z_next = Z;
+        end
+    elseif size(Z, 1) > 2 * Problem.N
+        picked_frontiers = crowding_pick(frontiers, 2 *  Problem.N, 'precise');
+        [~, allocation] = pair([frontiers.objs], Z, 'sin');
+        index_inactive_clusters = setdiff(1: size(Z, 1), unique(allocation));
+        P = truncate([picked_frontiers.objs]); N = truncate(Z(index_inactive_clusters, :));
+        if size(P, 1) > 0 && size(N, 1) > 0
+            [~, y_active] = predict(P, SVM); p_index = find(y_active == 1);
+            [~, y_inactive] = predict(N, SVM); n_index = find(y_inactive == -1);
+            P = P(setdiff(1: size(P, 1), p_index), :); N = N(setdiff(1: size(N, 1), n_index), :);
+            SVM = learn(P, N, SVM, 'svmtrain2');
+            Z_next = reduce_useless(Z, delta, SVM, Problem);
+        else
+            Z_next = Z;
+        end
+    else
+        Z_next = Z;
+    end
+    [~, allocation] = pair([frontiers.objs], Z, 'sin');
+    Z = unique([Z_active_old; Z_next; Z(unique(allocation), :)], 'rows');
+end
+end
+
+function Z = reduce_useless(Z, threshold, SVM, Problem)
+original_size = size(Z, 1);
+if original_size <= Problem.N
+    index_remain = 1: original_size;
+else
+    [score, ~] = predict(Z, SVM);
+    if length(score) == 1
+        index_remain = 1: original_size;
+    elseif isempty(threshold)
+        index_remain = [];
+    elseif threshold > 0 && threshold <= 1
+        threshold = min(threshold, 0.5);
+        index_remain = find(score >= threshold);
+    elseif threshold > 1
+        S = sort(score, 'descend');
+        threshold = S(min(max(Problem.N, threshold), numel(S)));
+        index_remain = find(score >= threshold);
+    end
+    if numel(index_remain) < Problem.N
+        S = sort(score, 'descend');
+        threshold = S(min(Problem.N, numel(S)));
+        index_remain = find(score >= threshold);
+    end
+end
+Z = Z(index_remain, :);
+fprintf('reference vectors reduced from %d to %d (-%d)\n', original_size, numel(index_remain), original_size - numel(index_remain));
+end
+
+function [status, index_i_active, index_i_inactive] = check_status(total_number, active_index, inactive_index, Problem)
+global normalization_str current_density status_initial_flag stable_threshold;
+persistent density history consecutive_stable_counter threshold;
+if status_initial_flag == true
+    status_initial_flag = false;
+    consecutive_stable_counter = 0;
+    density = current_density;
+    history = zeros(1, total_number);
+    if Problem.M == 5
+        pointer = 1;
+    elseif Problem.M == 10
+        pointer = 2;
+    elseif Problem.M == 15
+        pointer = 3;
+    else
+        pointer = 0;
+    end
+    if pointer > 0 && stable_threshold(pointer) > 0
+        threshold = stable_threshold(pointer);
+    else
+        threshold = min(20, max(5, ceil(Problem.maxFE / 2e4)));
+    end
+end
+if strcmp(normalization_str, 'normalize')
+    fluctuation = 3;
+else
+    fluctuation = 1e-2;
+end
+if density ~= current_density
+    density = current_density;
+    status_initial_flag = false;
+    consecutive_stable_counter = 0;
+    history = zeros(1, total_number);
+end
+current = zeros(size(history));
+current(active_index) = 1;
+if norm(history - current) <= fluctuation
+    consecutive_stable_counter = consecutive_stable_counter + 1;
+else
+    history = current;
+    consecutive_stable_counter = 0;
+end
+if consecutive_stable_counter >= threshold
+    consecutive_stable_counter = 0;
+    threshold = max(5, threshold - 1);
+    status = 'stable';
+    index_i_active = active_index; index_i_inactive = inactive_index;
+else
+    status = 'unstable';
+    index_i_active = []; index_i_inactive = [];
+end
+end
+
+function SVM = learn(P, N, SVM, training_mode)
+length_P = size(P, 1); length_N = size(N, 1);
+if length_P == 0 || length_N == 0
+    return;
+end
+X = project2simplex([P; N]); y = [ones(length_P, 1); -1 * ones(length_N, 1)];
+if ~isempty(SVM.y_mer) % NOT NEW
+    [SVM.a, SVM.b, SVM.g, SVM.ind, SVM.uind, SVM.X_mer, SVM.y_mer, SVM.Rs, SVM.Q] = feval(training_mode, X', y, SVM.C);
+else
+    [SVM.a, SVM.b, SVM.g, SVM.ind, SVM.uind, SVM.X_mer, SVM.y_mer, SVM.Rs, SVM.Q] = feval(training_mode, X', y, SVM.C, SVM.type, SVM.scale);
+end
+end
+
+function projected_points = project2simplex(O)
+global hp_initial_flag;
+persistent V Q;
+if isempty(V) || hp_initial_flag == true
+    M = size(O, 2);
+    Q = orth(eye(M, M) - repmat(ones(M, 1) ./ M, 1, M));
+    hp_initial_flag = false;
+end
+if size(O, 1)
+    projected_points = O * Q;
+else
+    projected_points = [];
+end
+end
+
+function [score, class] = predict(X, SVM)
+class = nan(1, size(X, 1));
+score = class';
+if ~isempty(SVM.y_mer)
+    block_size = 10000;
+    X = project2simplex(X);
+    blocks = floor(size(X, 1) / block_size);
+    score = nan(size(size(X, 1), 1));
+    B = mat2cell(X, [block_size * ones(1, blocks), size(X, 1) - block_size * blocks], size(X, 2));
+    for i = 1: blocks
+        score((i - 1) * block_size + 1: i * block_size) = 0.5 + 0.5 * elliotsig(svmeval((B{i})', SVM.a, SVM.b, SVM.ind, SVM.X_mer, SVM.y_mer, SVM.type, SVM.scale));
+    end
+    score(block_size * blocks + 1: size(X, 1)) = 0.5 + 0.5 * elliotsig(svmeval((B{blocks + 1})', SVM.a, SVM.b, SVM.ind, SVM.X_mer, SVM.y_mer, SVM.type, SVM.scale));
+    class(score >= 0.5) = 1; class(score < 0.5) = -1;
+end
+end
+
+function Z = truncate(Z)
+Z = Z ./ repmat(sum(Z, 2), 1, size(Z, 2));
+end
+
+function [Z, Population, Archive, Sample, SVM] = initialize(Global)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+global incremental_sequence stable_threshold LARGE_ARCHIVE_FLAG SVM_KERNEL SVM_KERNEL_SCALE SVM_EXIST_FLAG reserved_evaluations reference_generation_mode crowding_pick_flag lb ub reference_generation_intial_flag learning_initial_flag normalization_str status_initial_flag disable_flag hp_initial_flag;
+rng('shuffle');
+SVM_EXIST_FLAG = false; SVM_KERNEL = 'gaussian'; SVM_KERNEL_SCALE = 0.056;
+lb = zeros(1, Global.M); ub = ones(1, Global.M);
+crowding_pick_flag = false;
+learning_initial_flag = true;
+reference_generation_intial_flag = true;
+status_initial_flag = true;
+hp_initial_flag = true;
+reference_generation_mode = 'strict';
+LARGE_ARCHIVE_FLAG = false;
+reserved_evaluations = inf;
+disable_flag = false;
+SVM.a = [];
+SVM.b = [];
+SVM.g = [];
+SVM.ind = [];
+SVM.uind = [];
+SVM.X_mer = [];
+SVM.y_mer = [];
+SVM.Rs = [];
+SVM.Q = [];
+SVM.scale = 0.056; SVM.type = 5; % 5 for Gaussian!
+SVM.C = 10;
+% if Global.M > 10
+%     error('M > 10 not yet supported on PlatEMO_v2');
+% end
+problem = class(Global);
+%% hyperparameters for MaF
+% if ~regexp(problem, 'MaF')
+%     error('problems other than MaF not yet supported on PlatEMO_v2');
+% else
+    if strcmp(problem, 'MaF1')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [20, 20, 15];
+        end
+        if Global.M == 5
+            disable_flag = false;
+            crowding_pick_flag = false;
+            incremental_sequence = [210,330,495,715,1001,1365,1820,2380,3060,3876,4845,8855];
+        elseif Global.M == 10
+            incremental_sequence = [230,275,440,16445];
+            disable_flag = false;
+            crowding_pick_flag = true;
+        end
+        normalization_str = '';
+        reserved_evaluations = 150000;
+    end
+    if strcmp(problem, 'MaF2')
+        if Global.M == 5
+            incremental_sequence = [210;330;495;715;1001;1365;1820;2380];
+            disable_flag = false;
+            crowding_pick_flag = false;
+        elseif Global.M == 10
+            incremental_sequence = [230,275,440,715,725,770,935,1430,2002];
+            disable_flag = false;
+            crowding_pick_flag = true;
+            normalization_str = '';
+        end
+    end
+    if strcmp(problem, 'MaF3')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [inf, inf, inf];
+        end
+        crowding_pick_flag = false;
+        disable_flag = true;
+        normalization_str = '';
+    end
+    if strcmp(problem, 'MaF4')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [5, 10, 15];
+        end
+        if Global.M == 5
+            disable_flag = false;
+            LARGE_ARCHIVE_FLAG = true;
+            crowding_pick_flag = false;
+        elseif Global.M == 10
+            disable_flag = false;
+            crowding_pick_flag = false;
+            reserved_evaluations = 150000;
+        end
+        normalization_str = '';
+    end
+    if strcmp(problem, 'MaF5')
+        crowding_pick_flag = false;
+        disable_flag = true;
+        normalization_str = 'normalize';
+    end
+    if strcmp(problem, 'MaF6')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [5, 10, 15];
+        end
+        if Global.M == 5
+            disable_flag = false;
+            crowding_pick_flag = true;
+        elseif Global.M == 10
+            disable_flag = false;
+            crowding_pick_flag = false;
+        end
+        normalization_str = '';
+        reference_generation_mode = 'normal';
+    end
+    if strcmp(problem, 'MaF7')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [10, 15, 20];
+        end
+        if Global.M == 5
+            disable_flag = false;
+            crowding_pick_flag = false;
+        elseif Global.M == 10
+            disable_flag = false;
+            crowding_pick_flag = false;
+        end
+        normalization_str = 'normalize';
+        reserved_evaluations = 150000;
+        reference_generation_mode = 'normal';
+    end
+    if strcmp(problem, 'MaF8')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [5, 5, 5];
+        end
+        if Global.M == 5
+            disable_flag = false;
+            crowding_pick_flag = false;
+        elseif Global.M == 10
+            disable_flag = false;
+            crowding_pick_flag = true;
+        end
+        normalization_str = 'normalize';
+        reference_generation_mode = 'normal';
+    end
+    if strcmp(problem, 'MaF9')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [5, 5, 5];
+        end
+        if Global.M == 5
+            disable_flag = false;
+            crowding_pick_flag = false;
+        elseif Global.M == 10
+            disable_flag = false;
+            crowding_pick_flag = false;
+        end
+        normalization_str = '';
+        reference_generation_mode = 'normal';
+    end
+    if strcmp(problem, 'MaF10')
+        crowding_pick_flag = false;
+        disable_flag = true;
+        LARGE_ARCHIVE_FLAG = false;
+    end
+    if strcmp(problem, 'MaF11')
+        crowding_pick_flag = false;
+        disable_flag = true;
+    end
+    if strcmp(problem, 'MaF12')
+        crowding_pick_flag = false;
+        disable_flag = true;
+    end
+    if strcmp(problem, 'MaF13')
+        crowding_pick_flag = false;
+        disable_flag = false;
+        reserved_evaluations = 100000;
+        normalization_str = '';
+    end
+    if strcmp(problem, 'MaF14')%OK
+        crowding_pick_flag = false;
+        disable_flag = true;
+        normalization_str = '';
+    end
+    if strcmp(problem, 'MaF15')
+        if norm(stable_threshold) < 1e-2
+            stable_threshold = [20, 20, 20];
+        end
+        disable_flag = false;
+        crowding_pick_flag = false;
+        normalization_str = '';
+        if Global.M == 5
+            reserved_evaluations = 300000;
+        elseif Global.M == 10
+            reserved_evaluations = 1850000;
+        end
+    end
+    Z = generate_reference([], 0, Global, -inf, 'normal');
+    reference_generation_intial_flag = true;
+    Population = Global.Initialization(); Archive = Population; Sample = Population;
+% end
+end
+
+% BOOKKEEPING - Updates the status of example indss and modifies the corresponding
+%               coefficient a(indss) in certain cases to avoid numerical errors.
+%
+% Syntax: [indco,i] = bookkeeping(indss,cstatus,nstatus)
+%
+%     indco: matrix row/col to remove from Rs and Q if removing a margin vector
+%         i: when i > 0, the i-th element was removed from ind{RESERVE}
+%     indss: the example changing status
+%   cstatus: current status of the example
+%   nstatus: new status of the example
+%
+%            example status values:
+%            1: margin vector
+%            2: error vector
+%            3: reserve vector
+%            4: unlearned vector
+%
+% Version 3.22 -- Comments to diehl@alumni.cmu.edu
+%
+
+function [indco,i] = bookkeeping(indss,cstatus,nstatus)
+
+indco = -1;
+i = 0;
+if (cstatus ~= nstatus)
+
+	% flags for example state
+	MARGIN    = 1;
+	ERROR     = 2;
+	RESERVE   = 3;
+    UNLEARNED = 4;
+
+	% define global variables
+	global a;     % the alpha coefficients
+	global C;     % regularization parameters
+	global ind;   % cell array containing indices of margin, error, reserve and unlearned vectors           
+                
+	% adjust coefficient to avoid numerical errors if necessary
+	switch nstatus
+	case RESERVE
+	   a(indss) = 0;
+	case ERROR
+	   a(indss) = C(indss);
+	end;
+
+	% if the example is currently a margin vector, determine the row
+	% in the extended kernel matrix inverse that needs to be removed
+	if (cstatus == MARGIN)
+   	indco = find(indss == ind{MARGIN}) + 1;
+	end;
+
+	% change the status of the example
+	switch nstatus
+	case RESERVE
+   	[ind{cstatus},i] = move_indr(ind{cstatus},indss);
+	otherwise
+	   [ind{cstatus},ind{nstatus}] = move_ind(ind{cstatus},ind{nstatus},indss);
+	end;
+ 
+end;
+
+
+% GESTLOO - Estimates g for the given example that results after 
+%           unlearning the example.
+%
+% Syntax: g_est = gestloo(indc)
+%
+%   indc: example index
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function g_est = gestloo(indc)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables 
+global a;      % alpha coefficients
+global C; 	   % regularization parameters
+global deps;   % jitter factor in kernel matrix
+global g;      % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;    % cell array containing indices of margin, error, reserve and unlearned vectors
+global Q;      % extended kernel matrix for all vectors
+global Rs;     % inverse of extended kernel matrix for margin vectors   
+global scale;  % kernel scale
+global type;   % kernel type
+global X;      % matrix of margin, error, reserve and unlearned vectors stored columnwise
+
+num_MVs = length(ind{MARGIN});
+i = find(indc == ind{MARGIN});
+is_margin = ~isempty(i);
+if (is_margin)
+       
+   % shrink the inverse of the extended kernel matrix for the margin vectors.
+   % assumes there is more than one margin vector.
+   stripped = [1:i i+2:size(Rs,1)]; 
+   Rs_new = Rs(stripped,stripped)-Rs(stripped,i+1)*Rs(i+1,stripped)/Rs(i+1,i+1);
+   
+   Qcc = Q(i+1,indc);
+   Qc = [Q(1:i,indc) ; Q(i+2:size(Q,1),indc)];
+        
+else
+      
+   Rs_new = Rs;
+   Qcc = kernel(X(:,indc),X(:,indc),type,scale) + deps;
+   Qc = Q(:,indc);
+   
+end;
+   
+% compute beta and gamma_c
+beta = -Rs_new*Qc;
+gamma_c = Qcc + Qc'*beta;
+
+% compute g_est
+g_est = g(indc) - a(indc)*gamma_c;
+
+
+% KERNEL - Kernel function evaluation  
+%
+% Syntax: K = kernel(X,Y,type,scale)
+%
+%      X: (N,Mx) dimensional matrix
+%      Y: (N,My) dimensional matrix
+%      K: (Mx,My) dimensional matrix 
+%   type: kernel type
+%           1: linear kernel        X'*Y
+%         2-4: polynomial kernel    (scale*X'*Y + 1)^type
+%           5: Gaussian kernel with variance 1/(2*scale)
+%  scale: kernel scale
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function K = kernel(X,Y,type,scale)
+
+global kernel_evals;			% kernel evaluations
+
+K = X'*Y;
+[N,Mx] = size(X);
+[N,My] = size(Y);
+if ((type > 1) & (type < 5))
+   K = (K*scale+1).^type;
+elseif (type == 5)
+   K = 2*K;
+   K = K - sum(X.^2,1)'*ones(1,My);
+   K = K - ones(Mx,1)*sum(Y.^2,1);
+   K = exp(K/(2*scale));
+end;
+kernel_evals = kernel_evals + Mx*My;
+
+
+
+% KEVALS - Returns the number of kernel evaluations 
+%
+% Syntax: kernel_evals = kevals();
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function kernel_evals = kevals();
+
+global kernel_evals;
+
+if (isempty(kernel_evals))
+   kernel_evals = 0;
+end;
+
+
+% KEVALSRESET - Resets the kernel evaluations counter 
+%
+% Syntax: kevalsreset();
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function kevalsreset();
+
+global kernel_evals;
+
+kernel_evals = 0;
+
+
+% LEARN - Increments the specified example into the current SVM solution.  
+%         Assumes alpha_c = 0 initially.
+%
+% Syntax: nstatus = learn(indc,rflag)
+%
+% nstatus: new status for indc
+%    indc: index of the example to learn
+%   rflag: flag indicating whether or not to check if any reserve vectors
+%          become margin vectors during learning
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function nstatus = learn(indc,rflag)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables 
+global a;             % alpha coefficients
+global b;             % bias
+global C;             % regularization parameters
+global deps;          % jitter factor in kernel matrix
+global g;             % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;           % structure containing indices of margin, error, reserve and unlearned vectors
+global perturbations; % number of perturbations
+global Q;             % extended kernel matrix for all vectors
+global Rs;            % inverse of extended kernel matrix for margin vectors   
+global scale;         % kernel scale
+global type;          % kernel type
+global X;             % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;             % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+% compute g(indc) 
+[f_c,K] = svmeval(X(:,indc));
+g(indc) = y(indc)*f_c - 1;
+
+% if g(indc) > 0, place this example into the reserve set directly
+if (g(indc) >= 0)
+   
+   % move the example to the reserve set
+   bookkeeping(indc,UNLEARNED,RESERVE);
+   nstatus = RESERVE;
+   
+   return;
+end;
+
+% compute Qcc and Qc if necessary
+num_MVs = length(ind{MARGIN});
+Qc = cell(3,1);
+if (num_MVs == 0)
+	if (length(ind{ERROR}) > 0)
+   	Qc{ERROR} = (y(ind{ERROR})*y(indc)).*kernel(X(:,ind{ERROR}),X(:,indc),type,scale);
+   end;
+else
+	Qc{MARGIN} = (y(ind{MARGIN})*y(indc)).*K(1:num_MVs);
+	if (length(ind{ERROR}) > 0)
+   	Qc{ERROR} = (y(ind{ERROR})*y(indc)).*K(num_MVs+1:length(K));
+	end;
+end;
+if (length(ind{RESERVE}) > 0)
+   Qc{RESERVE} = (y(ind{RESERVE})*y(indc)).*kernel(X(:,ind{RESERVE}),X(:,indc),type,scale);
+end;
+Qcc = kernel(X(:,indc),X(:,indc),type,scale) + deps;
+
+converged = 0;
+while (~converged)
+   
+   perturbations = perturbations + 1;
+   
+   if (num_MVs > 0)  % change in alpha_c permitted
+   
+      % compute Qc, beta and gamma
+      beta = -Rs*[y(indc) ; Qc{MARGIN}];
+      gamma = zeros(size(Q,2),1);
+      ind_temp = [ind{ERROR} ind{RESERVE} indc];
+      gamma(ind_temp) = [Qc{ERROR} ; Qc{RESERVE} ; Qcc] + Q(:,ind_temp)'*beta;
+      
+      % check if gamma_c < 0 (kernel matrix is not positive semi-definite)
+      if (gamma(indc) < 0)
+         error('LEARN: gamma_c < 0');
+      end;
+      
+   else  % change in alpha_c not permitted since the constraint on the sum of the
+         % alphas must be preserved.  only b can change.  
+      
+      % set beta and gamma
+      beta = y(indc);
+      gamma = y(indc)*y;
+      
+   end;
+   
+   % minimum acceptable parameter change (change in alpha_c (num_MVs > 0) or b (num_MVs = 0))
+   [min_delta_param,indss,cstatus,nstatus] = min_delta_acb(indc,gamma,beta,1,rflag);
+   
+   % update a, b, and g
+   if (num_MVs > 0)
+      a(indc) = a(indc) + min_delta_param;
+      a(ind{MARGIN}) = a(ind{MARGIN}) + beta(2:num_MVs+1)*min_delta_param;
+   end;   
+   b = b + beta(1)*min_delta_param;
+   g = g + gamma*min_delta_param;
+         
+   % update Qc and perform bookkeeping         
+   converged = (indss == indc);
+   if (converged)
+      cstatus = UNLEARNED;
+     	Qc{nstatus} = [Qc{nstatus} ; Qcc];
+  	else
+  		ind_temp = find(ind{cstatus} == indss);
+  		Qc{nstatus} = [Qc{nstatus} ; Qc{cstatus}(ind_temp)];
+  		Qc{cstatus}(ind_temp) = [];
+   end;
+   [indco,removed_i] = bookkeeping(indss,cstatus,nstatus);
+   if ((nstatus == RESERVE) & (removed_i > 0))
+      Qc{nstatus}(removed_i) = [];
+   end;
+      
+   % set g(ind{MARGIN}) to zero
+   g(ind{MARGIN}) = 0;
+   
+   % update Rs and Q if necessary
+   if (nstatus == MARGIN)
+              
+      num_MVs = num_MVs + 1;
+      if (num_MVs > 1)
+         if (converged)
+            gamma = gamma(indss);
+         else
+               
+            % compute beta and gamma for indss            
+            beta = -Rs*Q(:,indss);
+            gamma = kernel(X(:,indss),X(:,indss),type,scale) + deps + Q(:,indss)'*beta;
+            
+         end;
+      end;
+            
+      % expand Rs and Q
+      updateRQ(beta,gamma,indss);
+      
+   elseif (cstatus == MARGIN)      
+              
+      % compress Rs and Q      
+      num_MVs = num_MVs - 1;
+      updateRQ(indco);
+            
+   end;         
+   
+end;
+
+
+% LOADCLASS - Loads the SVM from the specified file into memory.
+%
+% Syntax: loadclass(fname)
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function loadclass(fname)
+
+% define global variables 
+global a;                     % alpha coefficients
+global b;                     % bias
+global C;                     % regularization parameters
+global deps;                  % jitter factor in kernel matrix
+global g;                     % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;                   % cell array containing indices of margin, error, reserve and unlearned vectors
+global max_reserve_vectors;   % maximum number of reserve vectors stored
+global Q;                     % extended kernel matrix for all vectors
+global Rs;                    % inverse of extended kernel matrix for margin vectors   
+global scale;                 % kernel scale
+global type;                  % kernel type
+global uind;                  % user-defined example indices
+global X;                     % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;                     % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+% load SVM state
+flag = 0;
+cmd = sprintf('load %s a b C deps g ind max_reserve_vectors Q Rs scale type uind X y;',fname);
+eval(cmd,'flag = 1;');
+if (flag)
+   disp('LOADCLASS: Unable to load the SVM!');
+end;
+
+
+% LOOEST - Computes an approximate leave-one-out estimate of the error rate
+%          for a two-class SVM using the margin sensitivity method.
+%
+% Syntax: [loo_est,conf_matrix,g_loo] = looest
+%         (evaluates the current SVM in memory)
+%
+%         [loo_est,conf_matrix,g_loo] = looest(X,y,a,b,g,ind,type,scale,Rs,Q)
+%         (evaluates the given SVM)
+%
+%     loo_est: number of leave-one-out errors
+% conf_matrix: confusion matrix
+%       g_loo: estimates of g for each example after the example is unlearned
+%           X: matrix of training vectors stored columnwise
+%           y: column vector of class labels (-1/+1) for training vectors
+%           a: alpha coefficients
+%           b: bias
+%           g: partial derivatives of cost function w.r.t. alpha coefficients
+%         ind: cell array containing indices of margin, error and reserve vectors
+%         		ind{1}: indices of margin vectors
+%         		ind{2}: indices of error vectors
+%         		ind{3}: indices of reserve vectors
+%        type: kernel type
+%                1: linear kernel        X'*Y
+%              2-4: polynomial kernel    (scale*X'*Y + 1)^type
+%                5: Gaussian kernel with variance 1/(2*scale)
+%       scale: kernel scale
+%          Rs: inverse of extended kernel matrix for margin vectors
+%           Q: extended kernel matrix for all vectors
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [loo_est,conf_matrix,g_loo] = looest(varargin)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+if (nargin == 0)
+
+   % define global variables 
+   global a; 
+   global b; 
+   global g;                           
+   global ind;
+   global Q;
+   global Rs;   
+   global scale;
+   global type;
+   global X;
+   global y;
+   
+else   
+   
+   % define arguments
+   X = varargin{1};
+   y = varargin{2};
+   a = varargin{3};
+   b = varargin{4};
+   g = varargin{5};
+   ind = varargin{6};
+   type = varargin{7};
+   scale = varargin{8};
+   Rs = varargin{9};
+   Q = varargin{10};
+   
+end;
+   
+% if the user wants g_loo, make sure to compute g_loo for the error vectors with initial g < -1.
+% if we only care about the error rate, we don't need to unlearn these examples because they are
+% guaranteed to be classified incorrectly.
+if (nargout == 3)
+   g_flag = 1;
+else
+   g_flag = 0;
+end;
+
+% initialize variables
+loo_est = 0;
+g_loo = g;
+
+% initialize confusion matrix
+conf_matrix = zeros(2,3);
+if (length(ind{RESERVE}) > 0)
+	conf_matrix(1,1) = sum(y(ind{RESERVE}) == 1);
+	conf_matrix(2,2) = sum(y(ind{RESERVE}) == -1);
+end;
+
+% begin approximate leave-one-out estimation
+ind_loo = [ind{MARGIN} ind{ERROR}];
+num_margin_vectors = length(ind{MARGIN});
+disp('Beginning margin estimation.');
+for i = 1:length(ind_loo)
+   
+   % select example 
+   indc = ind_loo(i);
+   
+   % instead of unlearning the example, estimate the resulting g
+   % based on the margin sensitivity for the example
+   if ((g(indc) >= -1) | (g_flag))
+      g_est = gestloo(indc);
+      g_loo(indc) = g_est;   
+   else
+      g_est = g(indc);
+   end;
+      
+   % check to see if the example would be misclassified and record results
+   loo_est = loo_est + (g_est < -1);
+   if (y(indc) == 1)
+      j = 1 + (g_est <= -1) + (g_est == -1);
+      conf_matrix(1,j) = conf_matrix(1,j) + 1;
+   else
+      j = 1 + (g_est >= -1) + (g_est == -1);
+      conf_matrix(2,j) = conf_matrix(2,j) + 1;
+   end;
+   
+   if (mod(i,50) == 0)
+      s = sprintf('Estimated margins for %d examples.',i);
+      disp(s);
+   end;
+   
+end;
+if (mod(i,50) ~= 0)
+   s = sprintf('Estimated margins for %d examples.',i);
+   disp(s);
+end;
+s = sprintf('Process complete!\n');
+disp(s);
+
+
+
+
+% MIN_DELTA - Computes the minimum change in the parameter lambda
+%             that causes one of the parameters psi(k) to change from
+%             the given initial value to the given final value.
+%             Only the parameters with flags(k) = 1 are checked.  
+%             psi(k) and lambda are assumed to be linearly related.  
+%
+% Syntax: [min_d,k] = min_delta(flags,psi_initial,psi_final,psi_sens)
+%
+%       flags: parameters to check
+%       min_d: minimum change in lambda
+%           k: parameter psi_k that achieves psi_final_k
+% psi_initial: initial values for the parameters psi_i
+%   psi_final: final values for the parameters psi_i
+%    psi_sens: parameter sensitivities (d(psi_i)/d(lambda))
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [min_d,k] = min_delta(flags,psi_initial,psi_final,psi_sens)
+
+if (any(flags))
+   
+   % find the parameters to check
+   ind = find(flags);
+
+   deltas = (psi_final(ind)-psi_initial(ind))./psi_sens(ind);
+   [min_d,i] = min(deltas);
+   k = ind(i);
+
+   % if there is more than one parameter that achieves the final value
+   % with min_delta, select the parameter with the highest 
+   % sensitivity |psi_sens|
+   min_k = find(deltas == min_d);
+   if (length(min_k) > 1)
+      [max_sens,i] = max(abs(psi_sens(ind(min_k))));
+      k = ind(min_k(i));
+   end;
+
+else
+   
+   min_d = Inf;
+   k = -1;
+   
+end;
+
+
+% MIN_DELTA_ACB - Computes the minimum acceptable change in alpha_c or b
+%                 and indicates which example changes status along
+%                 with the type of status change.
+%
+% Syntax: [min_dacb,indss,cstatus,nstatus] = min_delta_acb(indc,gamma,beta,polc,rflag)
+%
+%   min_dacb: minimum acceptable change in alpha_c (num MVs > 0) / b (num MVs = 0)
+%      indss: the example changing status
+%    cstatus: current status of the example
+%             0: if indss = indc
+%             1: margin vector
+%             2: error vector
+%             3: reserve vector
+%             4: unlearned vector
+%    nstatus: new status of the example
+%             returns one of the values above
+%       indc: the current example being learned/unlearned
+%      gamma: margin sensitivities (delta g / delta alpha_c/b)
+%       beta: coefficient sensitivities (delta alpha_k/b / delta alpha_c/b)
+%       polc: sign of the change in alpha_c/b (+1/-1)
+%      rflag: flag indicating whether or not to check if any reserve vectors
+%             become margin vectors during learning
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [min_dacb,indss,cstatus,nstatus] = min_delta_acb(indc,gamma,beta,polc,rflag)
+
+% flags for example state  
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables
+global a;       % the alpha coefficients
+global C;       % regularization parameter(s)
+global g;       % partial derivatives of the objective function w.r.t. the alphas
+global ind;     % cell array containing indices of margin, error, reserve and unlearned vectors
+
+indss = zeros(6,1);
+indss(1:3) = indc;
+cstatus = zeros(6,1);
+nstatus = zeros(6,1);
+
+% upper limits on change in alpha_c or b assuming no other examples change status 
+if (polc == 1)  
+   delta_m = -g(indc)/gamma(indc);
+   nstatus(1) = MARGIN;   
+   if (length(beta) > 1)   % if there are margin vectors 
+      delta_e = C(indc) - a(indc);
+      nstatus(2) = ERROR;   
+   else                    % only the bias term is allowed to change so indc can't be an error vector  
+      delta_e = Inf;
+   end;
+   delta_r = Inf;
+else  
+   if (g(indc) > 0)        % decrementing indc when a(indc) > 0 and g(indc) > 0 during kernel perturbation
+      delta_m = g(indc)/gamma(indc);
+      nstatus(1) = MARGIN;
+   else
+      delta_m = Inf;
+   end;
+   if (a(indc) <= C(indc))
+      delta_e = Inf;
+   	  delta_r = a(indc);
+      if (g(indc) > 0)     % decrementing indc when a(indc) > 0 and g(indc) > 0 during kernel perturbation
+         nstatus(3) = RESERVE;
+      else
+         nstatus(3) = UNLEARNED;
+      end;
+   else                    % decrementing indc when a(indc) > C(indc) during reg. parameter perturbation
+      delta_e = a(indc) - C(indc);
+      delta_r = Inf;
+      nstatus(2) = ERROR;
+   end;
+end;
+
+% change in alpha_c or b that causes a margin vector to change to an error vector
+% or reserve vector
+if (length(beta) > 1)  % if there are margin vectors  
+   beta_s = polc*beta(2:length(beta));
+   flags = (abs(beta_s) > 0);
+   [delta_mer,i] = min_delta(flags,a(ind{MARGIN}),C(ind{MARGIN}).*(beta_s > 0),beta_s);
+   if (delta_mer < Inf)
+      indss(4) = ind{MARGIN}(i); 
+      cstatus(4) = MARGIN;
+      nstatus(4) = ERROR*(beta_s(i) > 0) + RESERVE*(beta_s(i) < 0);   
+   end;
+else
+   delta_mer = Inf;
+end;
+
+% change in alpha_c or b that causes an error vector to change to a margin vector
+gamma_e = polc*gamma(ind{ERROR});
+flags = (gamma_e > 0);
+[delta_em,i] = min_delta(flags,g(ind{ERROR}),zeros(length(ind{ERROR}),1),gamma_e);
+if (delta_em < Inf)
+   indss(5) = ind{ERROR}(i);
+   cstatus(5) = ERROR;
+   nstatus(5) = MARGIN;
+end;
+
+% change in alpha_c or b that causes a reserve vector to change to a margin vector
+if (rflag)
+   gamma_r = polc*gamma(ind{RESERVE});
+   flags = (g(ind{RESERVE}) >= 0) & (gamma_r < 0);
+   [delta_rm,i] = min_delta(flags,g(ind{RESERVE}),zeros(length(ind{RESERVE}),1),gamma_r);
+   if (delta_rm < Inf)
+      indss(6) = ind{RESERVE}(i);
+      cstatus(6) = RESERVE;
+      nstatus(6) = MARGIN;    
+   end;
+else
+   delta_rm = Inf;
+end;
+
+% minimum acceptable value for |delta_ac| or |delta_b|
+[min_dacb,min_ind] = min([delta_m,delta_e,delta_r,delta_mer,delta_em,delta_rm]);
+indss = indss(min_ind);
+cstatus = cstatus(min_ind);
+nstatus = nstatus(min_ind);
+
+% multiply by the proper sign to yield delta_ac or delta_b
+min_dacb = polc*min_dacb;
+
+
+% MIN_DELTA_P_C - Computes the minimum acceptable change in p_c during
+%                 regularization parameter perturbation and indicates 
+%                 which example changes status along with the type of status 
+%                 change.
+%
+% Syntax: [min_dpc,indss,cstatus,nstatus] = min_delta_p_c(p_c,gamma,beta,lambda)
+%
+%    min_dpc: minimum acceptable change in p_c
+%      indss: the example changing status (0 if nothing changed status)
+%    cstatus: current status of the example
+%             0: if indss = indc
+%             1: margin vector
+%             2: error vector
+%             3: reserve vector
+%             4: unlearned vector
+%    nstatus: new status of the example
+%             returns one of the values above
+%        p_c: current value of p_c
+%      gamma: margin sensitivities (delta g / delta p_c)
+%       beta: coefficient sensitivities (delta alpha_k/b / delta p_c)
+%     lambda: regularization sensitivities (delta C_k / delta p_c)
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [min_dpc,indss,cstatus,nstatus] = min_delta_p_c(p_c,gamma,beta,lambda)
+
+% flags for example state  
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables
+global a;       % the alpha coefficients
+global C;       % regularization parameter(s)
+global g;       % partial derivatives of the objective function w.r.t. the alphas
+global ind;     % cell array containing indices of margin, error, reserve and unlearned vectors
+
+indss = zeros(5,1);
+cstatus = zeros(5,1);
+nstatus = zeros(5,1);
+
+% upper limit on change in p_c assuming no other examples change status 
+delta_p_c = 1-p_c;
+
+% change in p_c that causes a margin vector to change to a reserve vector
+if (length(beta) > 1)  % if there are margin vectors  
+   beta_s = beta(2:length(beta));
+   flags = (beta_s < 0);
+   [delta_mr,i] = min_delta(flags,a(ind{MARGIN}),zeros(size(a(ind{MARGIN}))),beta_s);
+   if (delta_mr < Inf)
+      indss(2) = ind{MARGIN}(i); 
+      cstatus(2) = MARGIN;
+      nstatus(2) = RESERVE;   
+   end;
+else
+   delta_mr = Inf;
+end;
+
+% change in p_c that causes a margin vector to change to an error vector
+if (length(beta) > 1)  % if there are margin vectors
+   lambda_s = lambda(ind{MARGIN});
+   v = beta_s-lambda_s;
+   flags = (v > eps);
+   if (any(flags))
+      not_z = find(v > 0);
+      delta_me = Inf*ones(size(v));
+      delta_me(not_z) = (C(ind{MARGIN}(not_z))-a(ind{MARGIN}(not_z)))./v(not_z);
+      [delta_me,i] = min(delta_me);
+      if (delta_me < Inf)
+         indss(3) = ind{MARGIN}(i);
+         cstatus(3) = MARGIN;
+         nstatus(3) = ERROR;
+      end;
+   else
+      delta_me = Inf;
+   end;
+else
+   delta_me = Inf;   
+end;
+
+% change in p_c that causes an error vector to change to a margin vector
+gamma_e = gamma(ind{ERROR});
+flags = (gamma_e > 0);
+[delta_em,i] = min_delta(flags,g(ind{ERROR}),zeros(length(ind{ERROR}),1),gamma_e);
+if (delta_em < Inf)
+   indss(4) = ind{ERROR}(i);
+   cstatus(4) = ERROR;
+   nstatus(4) = MARGIN;
+end;
+
+% change in p_c that causes a reserve vector to change to a margin vector
+gamma_r = gamma(ind{RESERVE});
+flags = (g(ind{RESERVE}) >= 0) & (gamma_r < 0);
+[delta_rm,i] = min_delta(flags,g(ind{RESERVE}),zeros(length(ind{RESERVE}),1),gamma_r);
+if (delta_rm < Inf)
+   indss(5) = ind{RESERVE}(i);
+   cstatus(5) = RESERVE;
+   nstatus(5) = MARGIN;    
+end;
+
+% minimum acceptable value for p_c
+[min_dpc,min_ind] = min([delta_p_c,delta_mr,delta_me,delta_em,delta_rm]);
+indss = indss(min_ind);
+cstatus = cstatus(min_ind);
+nstatus = nstatus(min_ind);
+
+
+
+% MIN_DELTA_P_S - Computes the minimum acceptable change in p_s during
+%                 kernel parameter perturbation and indicates which 
+%                 example changes status along with the type of status change.
+%
+% Syntax: [min_dps,indss,cstatus,nstatus] = min_delta_p_s(p_s,gamma,beta,lambda)
+%
+%    min_dps: minimum acceptable change in p_s
+%      indss: the example changing status (0 if nothing changed status)
+%    cstatus: current status of the example
+%             0: if indss = indc
+%             1: margin vector
+%             2: error vector
+%             3: reserve vector
+%             4: unlearned vector
+%    nstatus: new status of the example
+%             returns one of the values above
+%        p_s: current value of p_s
+%      gamma: margin sensitivities (delta g / delta p_s)
+%       beta: coefficient sensitivities (delta alpha_k/b / delta p_s)
+%     lambda: regularization sensitivities (delta C_k / delta p_s)
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [min_dps,indss,cstatus,nstatus] = min_delta_p_s(p_s,gamma,beta,lambda)
+
+% flags for example state  
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables
+global a;       % the alpha coefficients
+global C;       % regularization parameter(s)
+global g;       % partial derivatives of the objective function w.r.t. the alphas
+global ind;     % cell array containing indices of margin, error, reserve and unlearned vectors
+
+indss = zeros(6,1);
+cstatus = zeros(6,1);
+nstatus = zeros(6,1);
+
+if (length(ind{UNLEARNED}) > 0)
+   
+   delta_p_s = Inf;
+   
+   % change in p_s that causes an unlearned vector to change to an error vector
+   lambda_u = lambda(ind{UNLEARNED});
+   flags = (lambda_u > 0);
+   [delta_ue,i] = min_delta(flags,a(ind{UNLEARNED}),C(ind{UNLEARNED}),lambda_u);
+   if (delta_ue < Inf)
+      indss(1) = ind{UNLEARNED}(i); 
+      cstatus(1) = UNLEARNED;
+      nstatus(1) = ERROR;   
+   end;
+   
+   % change in p_s that causes an unlearned vector to change to a margin vector
+   gamma_u = gamma(ind{UNLEARNED});
+   g_u = g(ind{UNLEARNED});
+   flags = (sign(gamma_u).*sign(g_u) == -1);
+   [delta_um,i] = min_delta(flags,g_u,zeros(size(g_u)),gamma_u);
+   if (delta_um < Inf)
+      indss(2) = ind{UNLEARNED}(i);
+      cstatus(2) = UNLEARNED;
+      nstatus(2) = MARGIN;
+   end;
+      
+   % change in p_s that causes an unlearned vector to change to a reserve vector
+   flags = (lambda_u < 0);
+   [delta_ur,i] = min_delta(flags,a(ind{UNLEARNED}),zeros(length(ind{UNLEARNED}),1),lambda_u);
+   if (delta_ur < Inf)
+      indss(3) = ind{UNLEARNED}(i); 
+      cstatus(3) = UNLEARNED;
+      nstatus(3) = RESERVE;   
+   end;
+   
+else
+   delta_p_s  = 1-p_s;
+   delta_ue = Inf;
+   delta_um = Inf;
+   delta_ur = Inf;
+end;
+
+% change in p_s that causes a margin vector to change to an error vector
+% or reserve vector
+if (length(beta) > 1)  % if there are margin vectors  
+   beta_s = beta(2:length(beta));
+   flags = (abs(beta_s) > 0);
+   [delta_mer,i] = min_delta(flags,a(ind{MARGIN}),C(ind{MARGIN}).*(beta_s > 0),beta_s);
+   if (delta_mer < Inf)
+      indss(5) = ind{MARGIN}(i); 
+      cstatus(5) = MARGIN;
+      nstatus(5) = ERROR*(beta_s(i) > 0) + RESERVE*(beta_s(i) < 0);   
+   end;
+else
+   delta_mer = Inf;
+end;
+
+% change in p_s that causes an error vector to change to a margin vector
+gamma_e = gamma(ind{ERROR});
+flags = (gamma_e > 0);
+[delta_em,i] = min_delta(flags,g(ind{ERROR}),zeros(length(ind{ERROR}),1),gamma_e);
+if (delta_em < Inf)
+   indss(6) = ind{ERROR}(i);
+   cstatus(6) = ERROR;
+   nstatus(6) = MARGIN;
+end;
+
+% change in p_s that causes a reserve vector to change to a margin vector
+gamma_r = gamma(ind{RESERVE});
+flags = (g(ind{RESERVE}) >= 0) & (gamma_r < 0);
+[delta_rm,i] = min_delta(flags,g(ind{RESERVE}),zeros(length(ind{RESERVE}),1),gamma_r);
+if (delta_rm < Inf)
+   indss(7) = ind{RESERVE}(i);
+   cstatus(7) = RESERVE;
+   nstatus(7) = MARGIN;    
+end;
+
+% minimum acceptable value for p_s
+[min_dps,min_ind] = min([delta_ue,delta_um,delta_ur,delta_p_s,delta_mer,delta_em,delta_rm]);
+indss = indss(min_ind);
+cstatus = cstatus(min_ind);
+nstatus = nstatus(min_ind);
+
+
+
+% MOVE_IND - Removes the indices indc from the indices inda
+%            and appends them to end of the indices indb.
+%            The relative order of the remaining indices in 
+%            inda is preserved.  
+%
+% Syntax: [inda,indb] = move_ind(inda,indb,indc)
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [inda,indb] = move_ind(inda,indb,indc)
+
+if (~isempty(indc))
+   indb = [indb indc];
+   new_inds = [];
+   for i = 1:length(inda)
+      if (~any(inda(i) == indc))
+         new_inds = [new_inds inda(i)];
+      end;
+   end;
+   inda = new_inds;
+end;
+
+
+% MOVE_INDR - Removes the indices indc from the indices inda
+%             and adds them to the reserve vector index list
+%             if necessary.  
+%
+% Syntax: [inda,i] = move_indr(inda,indc)
+%
+%      i: when i > 0, the i-th element was removed from ind{RESERVE}
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [inda,removed_i] = move_indr(inda,indc)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLABELED = 4;
+
+% define global variables
+global g;							% partial derivatives of cost function w.r.t. alpha coefficients
+global ind;							% cell array containing indices of margin, error, reserve and unlearned vectors
+global max_reserve_vectors;   % maximum number of reserve vectors
+
+removed_i = 0;
+num_RVs_orig = length(ind{RESERVE});
+
+% shift indc from inda to ind{RESERVE}
+[inda,ind{RESERVE}] = move_ind(inda,ind{RESERVE},indc);
+
+% if we need to remove some reserve vectors
+if (length(ind{RESERVE}) > max_reserve_vectors) 
+   
+   % sort g(ind{RESERVE})
+   [g_sorted,i] = sort(g(ind{RESERVE}));
+   
+   % reserve vectors that need to be removed
+   removed = i(max_reserve_vectors+1:length(i));
+   
+   % find any original reserve vectors that need to be removed
+   k = find(removed <= num_RVs_orig);
+   if (length(k) > 0)
+      removed_i = removed(k);
+   end;
+   
+   % remove the necessary reserve vectors
+   ind{RESERVE}(removed) = [];
+   
+end;
+
+
+
+% PERTS - Returns the number of perturbations 
+%
+% Syntax: perturbations = perts();
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function perturbations = perts();
+
+global perturbations;
+
+if (isempty(perturbations))
+   perturbations = 0;
+end;
+
+
+% PERTURBC - Perturbs the current solution to the solution valid for the
+%            given regularization parameters.  
+%
+% Syntax: [a,b,g,ind,X_mer,y_mer,Rs,Q] = perturbc(C)
+%
+%      a: alpha coefficients
+%      b: bias
+%      g: partial derivatives of cost function w.r.t. alpha coefficients
+%    ind: cell array containing indices of margin, error and reserve vectors
+%         ind{1}: indices of margin vectors
+%         ind{2}: indices of error vectors
+%         ind{3}: indices of reserve vectors
+%  X_mer: matrix of margin, error and reserve vectors stored columnwise
+%  y_mer: column vector of class labels (-1/+1) for margin, error and reserve vectors
+%     Rs: inverse of extended kernel matrix for margin vectors
+%      Q: extended kernel matrix for all vectors
+%      C: soft-margin regularization parameter(s)
+%         dimensionality of C       assumption
+%         1-dimensional vector      universal regularization parameter
+%         2-dimensional vector      class-conditional regularization parameters (-1/+1)
+%         n-dimensional vector      regularization parameter per example
+%         (where n = # of examples)
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [a,b,g,ind,X,y,Rs,Q] = perturbc(C_new)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables
+global a;               % alpha coefficients
+global b;               % bias
+global C;               % regularization parameters 
+global deps;            % jitter factor in kernel matrix
+global g;               % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;             % cell array containing indices of margin, error, reserve and unlearned vectors
+global perturbations;   % number of perturbations
+global Q;               % extended kernel matrix for all vectors
+global Rs;              % inverse of extended kernel matrix for margin vectors   
+global scale;           % kernel scale
+global type;            % kernel type
+global X;               % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;               % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+kernel_evals_begin = kevals;
+
+% create a vector containing the regularization parameter 
+% for each example if necessary
+if (length(C_new) == 1)              % same regularization parameter for all examples
+   C_new = C_new*ones(size(y));    
+elseif (length(C_new) == 2)          % class-conditional regularization parameters
+   flags = (y == -1);
+   C_new = C_new(1)*flags + C_new(2)*(~flags);
+end;
+
+% compute the regularization sensitivities
+lambda = C_new-C;
+
+% if there are no error vectors initially...
+if (length(ind{ERROR}) == 0)
+   
+   % find all the examples that have changing regularization parameters   
+   inde = find(lambda ~= 0);
+   
+   % find the subset of the above examples that could become error vectors
+   delta_p = (a(inde)-C(inde))./lambda(inde);
+   i = find(delta_p > 0);
+   
+   % determine the minimum acceptable change in p and adjust the regularization parameters
+   p = min([delta_p(i) ; 1]);
+   C = C + lambda*p;
+   
+   % if one example becomes an error vector, perform the necessary bookkeeping
+   if (p < 1)
+      i = find(delta_p == p);
+      indco = bookkeeping(inde(i),MARGIN,ERROR);
+      updateRQ(indco);
+   end;
+   
+else
+   p = 0;
+end;
+
+% if there are error vectors to adjust...
+if (p < 1)
+   
+   % compute sum{k in E} Qik lambda k and sum{k in E} yk lambda k
+   SQl = ((y*y(ind{ERROR})').*kernel(X,X(:,ind{ERROR}),type,scale))*lambda(ind{ERROR});
+   SQl(ind{ERROR}) = SQl(ind{ERROR}) + deps*lambda(ind{ERROR});
+   Syl = y(ind{ERROR})'*lambda(ind{ERROR});
+   
+end;   
+      
+s = sprintf('p = %.2f',p);
+disp(s);
+
+% change the regularization parameters incrementally
+disp_p_delta = 0.2;
+disp_p_count = 1;
+num_MVs = length(ind{MARGIN});
+perturbations = 0;
+while (p < 1) 
+   
+   perturbations = perturbations + 1;
+   
+   % compute beta and gamma
+   if (num_MVs > 0)
+      
+      v = zeros(num_MVs+1,1);
+      if (p < 1-eps)
+         v(1) = -Syl - sum(y.*a)/(1-p);
+      else
+         v(1) = -Syl;
+      end;
+      v(2:num_MVs+1) = -SQl(ind{MARGIN});
+      beta = Rs*v;
+      gamma = zeros(size(Q,2),1);
+      ind_temp = [ind{ERROR} ind{RESERVE} ind{UNLEARNED}];
+      if (length(ind_temp) > 0)  
+         gamma(ind_temp) = Q(:,ind_temp)'*beta + SQl(ind_temp);
+      end;
+      
+   else
+      
+      beta = 0;
+      gamma = SQl;
+                  
+   end;
+        
+   % minimum acceptable parameter change
+   [min_delta_p,indss,cstatus,nstatus] = min_delta_p_c(p,gamma,beta,lambda);
+   
+   % update a, b, g and p
+   if (length(ind{ERROR}) > 0)
+      a(ind{ERROR}) = a(ind{ERROR}) + lambda(ind{ERROR})*min_delta_p;
+   end;
+   if (num_MVs > 0)
+      a(ind{MARGIN}) = a(ind{MARGIN}) + beta(2:num_MVs+1)*min_delta_p;
+   end;   
+   b = b + beta(1)*min_delta_p;
+   g = g + gamma*min_delta_p;
+   p = p + min_delta_p;
+   C = C + lambda*min_delta_p;
+   
+   % perform bookkeeping         
+   indco = bookkeeping(indss,cstatus,nstatus);
+   
+   % update SQl and Syl when the status of indss changes from MARGIN to ERROR
+   if ((cstatus == MARGIN) & (nstatus == ERROR))
+      SQl = SQl + Q(indco,:)'*lambda(indss);
+      Syl = Syl + y(indss)*lambda(indss);      
+   end;
+   
+   % set g(ind{MARGIN}) to zero
+   g(ind{MARGIN}) = 0;
+   
+   % update Rs and Q if necessary
+   if (nstatus == MARGIN)
+              
+      num_MVs = num_MVs + 1;
+      if (num_MVs > 1)
+               
+         % compute beta and gamma for indss            
+         beta = -Rs*Q(:,indss);
+         gamma = kernel(X(:,indss),X(:,indss),type,scale) + deps + Q(:,indss)'*beta;
+            
+      end;
+            
+      % expand Rs and Q
+      updateRQ(beta,gamma,indss);
+      
+   elseif (cstatus == MARGIN)      
+              
+      % compress Rs and Q      
+      num_MVs = num_MVs - 1;
+      updateRQ(indco);
+     
+   end;         
+   
+   % update SQl and Syl when the status of indss changes from ERROR to MARGIN
+   if ((cstatus == ERROR) & (nstatus == MARGIN))
+      SQl = SQl - Q(num_MVs+1,:)'*lambda(indss);
+      Syl = Syl - y(indss)*lambda(indss);
+   end;
+   
+   if (p >= disp_p_delta*disp_p_count)
+      disp_p_count = disp_p_count + 1;
+      s = sprintf('p = %.2f',p);
+      disp(s);
+   end;
+  
+end;
+disp('Perturbation complete!');
+
+% summary statistics
+s = sprintf('\nMargin vectors:\t\t%d',length(ind{MARGIN}));
+disp(s);
+s = sprintf('Error vectors:\t\t%d',length(ind{ERROR}));
+disp(s);
+s = sprintf('Reserve vectors:\t%d',length(ind{RESERVE}));
+disp(s);
+s = sprintf('Kernel evaluations:\t%d\n',-kernel_evals_begin+kevals);
+disp(s);
+
+   
+
+
+% PERTURBK - Perturbs the current solution to the solution valid for the
+%            given kernel parameter.
+%
+% Syntax: [a,b,g,ind,X_mer,y_mer,Rs,Q] = perturbk(scale)
+%
+%      a: alpha coefficients
+%      b: bias
+%      g: partial derivatives of cost function w.r.t. alpha coefficients
+%    ind: cell array containing indices of margin, error and reserve vectors
+%         ind{1}: indices of margin vectors
+%         ind{2}: indices of error vectors
+%         ind{3}: indices of reserve vectors
+%  X_mer: matrix of margin, error and reserve vectors stored columnwise
+%  y_mer: column vector of class labels (-1/+1) for margin, error and reserve vectors
+%     Rs: inverse of extended kernel matrix for margin vectors
+%      Q: extended kernel matrix for all vectors
+%  scale: kernel scale
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [a,b,g,ind,X,y,Rs,Q] = perturbk(new_scale)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables
+global a;             % alpha coefficients
+global b;             % bias
+global C;             % regularization parameters 
+global deps;          % jitter factor in kernel matrix
+global g;             % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;           % cell array containing indices of margin, error, reserve and unlearned vectors
+global num_unlearned; % number of unlearned vectors initially
+global perturbations; % number of perturbations
+global Q;             % extended kernel matrix for all vectors
+global Rs;            % inverse of extended kernel matrix for margin vectors   
+global scale;			 % kernel scale
+global type;          % kernel type
+global X;             % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;             % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+kernel_evals_begin = kevals;
+num_examples = size(X,2);
+
+% sum{k in U} Qik lambda k and sum{k in U} yk lambda k
+SQl = zeros(num_examples,1);
+Syl = 0;
+
+% adjust kernel scale
+scale = new_scale;
+
+% recompute g for the margin, error and reserve vectors
+inda = [ind{MARGIN} ind{ERROR} ind{RESERVE}];
+[f,K] = svmeval(X(:,inda));
+g(inda) = y(inda).*f + a(inda)*deps - 1;
+
+% identify the unlearned vectors and compute their coefficient sensitivities
+lambda = zeros(num_examples,1);
+
+% find all error vectors with g >= 0
+flag = (g(ind{ERROR}) >= 0);
+i = find(flag);
+
+if (length(i) > 0)
+
+   % relabel error vectors with g >= 0 as unlearned
+   ind{UNLEARNED} = [ind{UNLEARNED} ind{ERROR}(i)];
+
+   % coefficient sensitivities
+   lambda(ind{ERROR}(i)) = -a(ind{ERROR}(i));
+
+   % update sums
+   SQl(inda) = SQl(inda) + ((y(ind{ERROR}(i))*y(inda)').*K(length(ind{MARGIN})+i,:))'*lambda(ind{ERROR}(i));
+   Syl = Syl + y(ind{ERROR}(i))'*lambda(ind{ERROR}(i));
+         
+   % keep remaining error vectors labeled as such
+   ind{ERROR}(i) = [];
+   
+end;
+   
+% find all reserve vectors with g <= 0
+flag = (g(ind{RESERVE}) <= 0);
+i = find(flag);
+
+if (length(i) > 0)
+
+   % relabel reserve vectors with g <= 0 as unlabeled
+   ind{UNLEARNED} = [ind{UNLEARNED} ind{RESERVE}(i)];
+
+   % coefficient sensitivities
+   lambda(ind{RESERVE}(i)) = C(ind{RESERVE}(i));
+
+   % update sums
+   SQl(inda) = SQl(inda) + ((y(inda)*y(ind{RESERVE}(i))').*kernel(X(:,inda),X(:,ind{RESERVE}(i)),type,scale))*lambda(ind{RESERVE}(i));
+   Syl = Syl + y(ind{RESERVE}(i))'*lambda(ind{RESERVE}(i));
+      
+   % keep remaining reserve vectors labeled as such
+   ind{RESERVE}(i) = [];
+   
+end;   
+   
+% find all margin vectors with g > 0
+flag = (g(ind{MARGIN}) > 0);
+i = find(flag);
+
+if (length(i) > 0)
+
+   % coefficient sensitivities
+   lambda(ind{MARGIN}(i)) = -a(ind{MARGIN}(i));
+
+   % update sums
+   SQl(inda) = SQl(inda) + ((y(ind{MARGIN}(i))*y(inda)').*K(i,:))'*lambda(ind{MARGIN}(i));
+   Syl = Syl + y(ind{MARGIN}(i))'*lambda(ind{MARGIN}(i));
+         
+end;   
+   
+% find all margin vectors with g <= 0
+flag = ~flag;
+i = find(flag);
+
+if (length(i) > 0)
+
+   % coefficient sensitivities
+   lambda(ind{MARGIN}(i)) = C(ind{MARGIN}(i))-a(ind{MARGIN}(i));
+
+   % update sums
+   SQl(inda) = SQl(inda) + ((y(ind{MARGIN}(i))*y(inda)').*K(i,:))'*lambda(ind{MARGIN}(i));
+   Syl = Syl + y(ind{MARGIN}(i))'*lambda(ind{MARGIN}(i));
+      
+end;   
+   
+% relabel margin vectors as unlearned
+ind{UNLEARNED} = [ind{UNLEARNED} ind{MARGIN}];
+ind{MARGIN} = [];
+
+% add jitter factor
+SQl(ind{UNLEARNED}) = SQl(ind{UNLEARNED}) + deps*lambda(ind{UNLEARNED});
+
+% number of unlearned vectors initially
+num_unlearned = length(ind{UNLEARNED});
+s = sprintf('Number of unlearned vectors: %d',num_unlearned);
+disp(s);
+
+% reset Q and Rs
+Q = Q(1,:);
+Rs = Inf;
+
+p_s = 0;
+num_MVs = length(ind{MARGIN});
+num_learned = 0;
+perturbations = 0;
+while ((length(ind{UNLEARNED}) > 0) | ((p_s < 1) & (length(ind{UNLEARNED}) == 0)))
+   
+   perturbations = perturbations + 1;
+   
+   % compute beta and gamma
+   if (num_MVs > 0)
+      
+      v = zeros(num_MVs+1,1);
+      if (p_s < 1-eps)
+         v(1) = -Syl - sum(y.*a)/(1-p_s);
+      else
+         v(1) = -Syl;
+      end;
+      v(2:num_MVs+1) = -SQl(ind{MARGIN});
+      beta = Rs*v;
+      gamma = zeros(size(Q,2),1);
+      ind_temp = [ind{ERROR} ind{RESERVE} ind{UNLEARNED}];
+      gamma(ind_temp) = Q(:,ind_temp)'*beta + SQl(ind_temp);
+      
+   else
+      
+      beta = 0;
+      gamma = SQl;
+                  
+   end;
+        
+   % minimum acceptable parameter change
+   [min_dps,indss,cstatus,nstatus] = min_delta_p_s(p_s,gamma,beta,lambda);
+   
+   % update a, b, g and p_s
+   if (length(ind{UNLEARNED}) > 0)
+      a(ind{UNLEARNED}) = a(ind{UNLEARNED}) + lambda(ind{UNLEARNED})*min_dps;
+   end;
+   if (num_MVs > 0)
+      a(ind{MARGIN}) = a(ind{MARGIN}) + beta(2:num_MVs+1)*min_dps;
+   end;   
+   b = b + beta(1)*min_dps;
+   g = g + gamma*min_dps;
+   p_s = p_s + min_dps;
+   
+   % perform bookkeeping         
+   indco = bookkeeping(indss,cstatus,nstatus);
+   
+   % set g(ind{MARGIN}) to zero
+   g(ind{MARGIN}) = 0;
+   
+   % update Rs and Q if necessary
+   if (nstatus == MARGIN)
+              
+      num_MVs = num_MVs + 1;
+      if (num_MVs > 1)
+               
+         % compute beta and gamma for indss            
+         beta = -Rs*Q(:,indss);
+         gamma = kernel(X(:,indss),X(:,indss),type,scale) + deps + Q(:,indss)'*beta;
+            
+      end;
+            
+      % expand Rs and Q
+      updateRQ(beta,gamma,indss);
+      
+   elseif (cstatus == MARGIN)      
+              
+      % compress Rs and Q      
+      num_MVs = num_MVs - 1;
+      updateRQ(indco);
+     
+   end;         
+   
+   % update SQl and Syl when the current status of indss is UNLEARNED
+   if (cstatus == UNLEARNED)
+      num_learned = num_learned + 1;
+      if (nstatus == MARGIN)
+         SQl = SQl - Q(num_MVs+1,:)'*lambda(indss);
+      else
+         SQl = SQl - ((y*y(indss)).*kernel(X,X(:,indss),type,scale))*lambda(indss);
+         SQl(indss) = SQl(indss) - deps*lambda(indss);   
+      end;
+      Syl = Syl - y(indss)*lambda(indss);
+      
+      if (mod(num_learned,50) == 0)
+         s = sprintf('Learned %d examples.',num_learned);
+         disp(s);
+      end;   
+   end;
+  
+end;
+disp('Perturbation complete!');
+
+% summary statistics
+s = sprintf('\nMargin vectors:\t\t%d',length(ind{MARGIN}));
+disp(s);
+s = sprintf('Error vectors:\t\t%d',length(ind{ERROR}));
+disp(s);
+s = sprintf('Reserve vectors:\t%d',length(ind{RESERVE}));
+disp(s);
+s = sprintf('Kernel evaluations:\t%d\n',-kernel_evals_begin+kevals);
+disp(s);
+
+
+
+% PLOT2DKM - For a 2-D binary classification problem, plot2dkm plots the data, 
+%            the margin and error vectors and contours of constant margin
+%            for the SVM classifier in memory.
+%
+% Syntax: plot2dkm
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function plot2dkm
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables 
+global ind;   % cell array containing indices of margin, error, reserve and unlearned vectors
+global X;     % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;     % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+% plot examples with label -1
+figure;
+indn1 = find(y == -1);
+scatter(X(1,indn1),X(2,indn1),40,'b','filled');
+hold on;
+
+% plot examples with label +1
+ind1 = find(y == 1);
+scatter(X(1,ind1),X(2,ind1),40,'r');
+
+% plot margin vectors
+scatter(X(1,ind{MARGIN}),X(2,ind{MARGIN}),120,'k');
+scatter(X(1,ind{MARGIN}),X(2,ind{MARGIN}),150,'k');
+scatter(X(1,ind{MARGIN}),X(2,ind{MARGIN}),200,'k');
+
+% plot error vectors
+scatter(X(1,ind{ERROR}),X(2,ind{ERROR}),120,'k');
+scatter(X(1,ind{ERROR}),X(2,ind{ERROR}),150,'k');
+scatter(X(1,ind{ERROR}),X(2,ind{ERROR}),200,'k');
+scatter(X(1,ind{ERROR}),X(2,ind{ERROR}),120,'k','x');
+scatter(X(1,ind{ERROR}),X(2,ind{ERROR}),150,'k','x');
+scatter(X(1,ind{ERROR}),X(2,ind{ERROR}),200,'k','x');
+
+% draw margin band
+xl = xlim;
+yl = ylim;
+pd = min(xl(2)-xl(1),yl(2)-yl(1))/100;
+x_range = xl(1):pd:xl(2);
+y_range = yl(1):pd:yl(2);
+f = zeros(length(y_range),length(x_range));
+i = 1;
+for xp = x_range
+   j = 1;
+   for yp = y_range
+      f(j,i) = svmeval([xp ; yp]);
+      j = j + 1;
+   end;
+   i = i + 1;
+end;
+contour(x_range,y_range,f,[-1 1]);
+
+
+
+
+
+
+
+% SAVECLASS - Saves the SVM in memory to the specified file.
+%
+% Syntax: saveclass(fname)
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function saveclass(fname)
+
+% define global variables 
+global a;                     % alpha coefficients
+global b;                     % bias
+global C;                     % regularization parameters
+global deps;                  % jitter factor in kernel matrix
+global g;                     % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;                   % cell array containing indices of margin, error, reserve and unlearned vectors
+global max_reserve_vectors;   % maximum number of reserve vectors stored
+global Q;                     % extended kernel matrix for all vectors
+global Rs;                    % inverse of extended kernel matrix for margin vectors   
+global scale;                 % kernel scale
+global type;                  % kernel type
+global uind;                  % user-defined example indices
+global X;                     % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;                     % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+% save SVM state
+cmd = sprintf('save %s a b C deps g ind max_reserve_vectors Q Rs scale type uind X y;',fname);
+eval(cmd);
+
+
+% SVMEVAL - Evaluates a support vector machine at the given data points.
+%
+% Syntax: [f,K] = svmeval(X,a,b,ind,X_mer,y_mer,type,scale)
+%         (evaluates the given SVM at the data points contained in X)
+%
+%         [f,K] = svmeval(X)
+%         (evaluates the SVM in memory at the data points contained in X)
+%
+%      f: SVM output for the evaluation vectors
+%      K: kernel matrix containing dot products in feature space between
+%         the margin and error vectors (rows of K) and the column vectors in X
+%         (columns of K)
+%      X: matrix of evaluation vectors stored columnwise
+%      a: alpha coefficients
+%      b: bias
+%    ind: cell array containing indices of margin, error and reserve vectors
+%         ind{1}: indices of margin vectors
+%         ind{2}: indices of error vectors
+%         ind{3}: indices of reserve vectors
+%  X_mer: matrix of margin, error and reserve vectors stored columnwise
+%  y_mer: column vector of class labels (-1/+1) for margin, error and reserve vectors
+%   type: kernel type
+%           1: linear kernel        K(x,y) = x'*y
+%         2-4: polynomial kernel    K(x,y) = (scale*x'*y + 1)^type
+%           5: Gaussian kernel with variance 1/(2*scale)
+%  scale: kernel scale
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [f,K] = svmeval(X_eval, varargin)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+if (nargin == 8)
+   
+   % define arguments
+   a     = varargin{1};
+   b     = varargin{2};
+   ind   = varargin{3};
+   X     = varargin{4};
+   y     = varargin{5};
+   type  = varargin{6};
+   scale = varargin{7};
+   
+else
+   
+   % define global variables
+   global a;
+   global b;
+   global ind;
+   global scale;
+   global type;
+   global X;           
+   global y;          
+   
+end;
+
+% evaluate the SVM
+
+% find all of the nonzero coefficients
+% (note: when performing kernel perturbation, ind{MARGIN} and ind{ERROR}
+%  do not necessarily identify all of the nonzero coefficients)
+indu = find(a(ind{UNLEARNED}) > 0);
+indu = ind{UNLEARNED}(indu);
+indr = find(a(ind{RESERVE}) > 0);
+indr = ind{RESERVE}(indr);
+indme = [ind{MARGIN} ind{ERROR}];
+
+K = [];
+f = b;
+if (length(indme) > 0)
+   K = kernel(X(:,indme),X_eval,type,scale);
+   f = f + K'*(y(indme).*a(indme));
+end;
+if (length(indu) > 0)
+   f = f + kernel(X(:,indu),X_eval,type,scale)'*(y(indu).*a(indu));
+end;
+if (length(indr) > 0)
+   f = f + kernel(X(:,indr),X_eval,type,scale)'*(y(indr).*a(indr));
+end;
+
+
+
+% SVMLOO - Computes the exact leave-one-out estimate of the error rate
+%          for a two-class SVM using Cauwenbergh's method.
+%
+% Syntax: [loo_est,conf_matrix,g_loo] = svmloo;
+%         (evaluates the current SVM in memory)
+%       
+%         [loo_est,conf_matrix,g_loo] = svmloo(X,y,a,b,g,ind,type,scale,Rs,Q)
+%         (evaluates the given SVM)
+%
+%     loo_est: number of leave-one-out error errors
+% conf_matrix: confusion matrix
+%       g_loo: the resulting g for each example after the example is unlearned
+%           X: matrix of training vectors stored columnwise
+%           y: column vector of class labels (-1/+1) for training vectors
+%           a: alpha coefficients
+%           b: bias
+%           g: partial derivatives of cost function w.r.t. alpha coefficients
+%         ind: cell array containing indices of margin, error and reserve vectors
+%         		ind{1}: indices of margin vectors
+%         		ind{2}: indices of error vectors
+%         		ind{3}: indices of reserve vectors
+%        type: kernel type
+%                1: linear kernel        X'*Y
+%              2-4: polynomial kernel    (scale*X'*Y + 1)^type
+%                5: Gaussian kernel with variance 1/(2*scale)
+%       scale: kernel scale
+%          Rs: inverse of extended kernel matrix for margin vectors
+%           Q: extended kernel matrix for all vectors
+%      g_flag: flag indicating whether or not to compute g_loo for the error vectors with g < -1
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [loo_est,conf_matrix,g_loo] = svmloo(varargin)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+if (nargin == 0)
+
+   % define global variables 
+   global a; 
+   global b; 
+   global g;                           
+   global ind;
+   global Q;
+   global Rs;   
+   global scale;
+   global type;
+   global X;
+   global y;
+   
+else   
+   
+   % define arguments
+   X = varargin{1};
+   y = varargin{2};
+   a = varargin{3};
+   b = varargin{4};
+   g = varargin{5};
+   ind = varargin{6};
+   type = varargin{7};
+   scale = varargin{8};
+   Rs = varargin{9};
+   Q = varargin{10};
+   g_flag = varargin(11);
+   
+end;
+
+% if the user wants g_loo, make sure to compute g_loo for the error vectors with initial g < -1.
+% if we only care about the error rate, we don't need to unlearn these examples because they are
+% guaranteed to be classified incorrectly.
+if (nargout == 3)
+   g_flag = 1;
+else
+   g_flag = 0;
+end;
+
+% initialize variables
+num_MVs = length(ind{MARGIN});      % number of margin vectors
+loo_est = 0;                        % number of leave-one-out errors
+a_orig = a;                         % original value of a
+b_orig = b;                         % original value of b
+Rs_orig = Rs;                       % original value of Rs
+Q_orig = Q;                         % original value of Q                                  
+g_orig = g;                         % original value of g
+num_MVs_orig = num_MVs;             % original value of num_MVs
+ind_orig = ind;                     % original value of ind
+g_loo = g;
+
+% initialize confusion matrix
+conf_matrix = zeros(2,3);
+if (length(ind{RESERVE}) > 0)
+	conf_matrix(1,1) = sum(y(ind{RESERVE}) == 1);
+	conf_matrix(2,2) = sum(y(ind{RESERVE}) == -1);
+end;
+
+% begin leave-one-out estimation
+ind_loo = [ind{MARGIN} ind{ERROR}];
+num_tested = 1;
+disp('Beginning LOO error rate estimation.');
+for i = 1:length(ind_loo)
+   
+   % select example to unlearn
+   indc = ind_loo(i);
+   
+   % unlearn example
+   if ((g(indc) >= -1) | (g_flag))
+      unlearn(indc);
+      g_loo(indc) = g(indc);   
+   end;
+   
+   if (mod(num_tested,50) == 0)
+      s = sprintf('Unlearned and tested %d examples.',num_tested);
+      disp(s);
+   end;
+   num_tested = num_tested + 1;
+   
+   % check to see if the example is now misclassified and record results
+   loo_est = loo_est + (g(indc) < -1);
+   if (y(indc) == 1)
+      j = 1 + (g(indc) <= -1) + (g(indc) == -1);
+      conf_matrix(1,j) = conf_matrix(1,j) + 1;
+   else
+      j = 1 + (g(indc) >= -1) + (g(indc) == -1);
+      conf_matrix(2,j) = conf_matrix(2,j) + 1;
+   end;
+      
+   % reset to original state prior to unlearning example
+   a = a_orig;
+   b = b_orig;
+   Rs = Rs_orig;
+   Q = Q_orig;                                 
+   g = g_orig;
+   ind = ind_orig;
+   num_MVs = num_MVs_orig;
+   
+end;
+if (mod(num_tested-1,50) ~= 0)
+   s = sprintf('Unlearned and tested %d examples.',num_tested-1);
+   disp(s);
+end;
+s = sprintf('Process complete!\n');
+disp(s);
+
+
+% SVMTRAIN - Trains a support vector machine incrementally
+%            using the L1 soft margin approach developed by
+%            Cauwenberghs for two-class problems.
+%
+% Syntax: [a,b,g,ind,uind,X_mer,y_mer,Rs,Q] = svmtrain(X,y,C,type,scale)
+%         [a,b,g,ind,uind,X_mer,y_mer,Rs,Q] = svmtrain(X,y,C,type,scale,uind)
+%         (trains a new SVM on the given examples)
+%
+%         [a,b,g,ind,uind,X_mer,y_mer,Rs,Q] = svmtrain(X,y,C)
+%         [a,b,g,ind,uind,X_mer,y_mar,Rs,Q] = svmtrain(X,y,C,uind)
+%         (trains the current SVM in memory on the given examples)
+%
+%      a: alpha coefficients
+%      b: bias
+%      g: partial derivatives of cost function w.r.t. alpha coefficients
+%    ind: cell array containing indices of margin, error and reserve vectors
+%         ind{1}: indices of margin vectors
+%         ind{2}: indices of error vectors
+%         ind{3}: indices of reserve vectors
+%   uind: column vector of user-defined example indices (used for unlearning specified examples)
+%  X_mer: matrix of margin, error and reserve vectors stored columnwise
+%  y_mer: column vector of class labels (-1/+1) for margin, error and reserve vectors
+%     Rs: inverse of extended kernel matrix for margin vectors
+%      Q: extended kernel matrix for all vectors
+%      X: matrix of training vectors stored columnwise
+%      y: column vector of class labels (-1/+1) for training vectors
+%      C: soft-margin regularization parameter(s)
+%         dimensionality of C       assumption
+%         1-dimensional vector      universal regularization parameter
+%         2-dimensional vector      class-conditional regularization parameters (-1/+1)
+%         n-dimensional vector      regularization parameter per example
+%         (where n = # of examples)
+%   type: kernel type
+%           1: linear kernel        K(x,y) = x'*y
+%         2-4: polynomial kernel    K(x,y) = (scale*x'*y + 1)^type
+%           5: Gaussian kernel with variance 1/(2*scale)
+%  scale: kernel scale
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [a,b,g,ind,uind,X,y,Rs,Q] = svmtrain(X_new,y_new,C_new,varargin)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% create a vector containing the regularization parameter 
+% for each example if necessary
+if (length(C_new) == 1)              % same regularization parameter for all examples
+   C_new = C_new*ones(size(y_new));    
+elseif (length(C_new) == 2)          % class-conditional regularization parameters
+   flags = (y_new == -1);
+   C_new = C_new(1)*flags + C_new(2)*(~flags);
+end;
+
+if (nargin >= 5)
+   
+   % define arguments      
+   type_new = varargin{1};
+   scale_new = varargin{2};
+   if (nargin == 6)
+      uind_new = varargin(3);
+   else
+      uind_new = zeros(size(y_new));
+   end;
+         
+   new_model = 1;   
+else
+   
+   % define arguments
+   if (nargin == 4)
+      uind_new = varargin(1);
+   else
+      uind_new = zeros(size(y_new));
+   end;
+      
+   new_model = 0;   
+end;
+
+% define global variables 
+global a;                     % alpha coefficients
+global b;                     % bias
+global C;                     % regularization parameters 
+global deps;                  % jitter factor in kernel matrix
+global g;                     % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;                   % cell array containing indices of margin, error, reserve and unlearned vectors
+global kernel_evals;          % kernel evaluations
+global max_reserve_vectors;   % maximum number of reserve vectors stored
+global perturbations;         % number of perturbations
+global Q;                     % extended kernel matrix for all vectors
+global Rs;                    % inverse of extended kernel matrix for margin vectors   
+global scale;                 % kernel scale
+global type;                  % kernel type
+global uind;                  % user-defined example indices
+global X;                     % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;                     % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+% initialize variables
+deps = 1e-3;
+max_reserve_vectors = 3000;    
+
+if (new_model)
+
+   num_examples = size(X_new,2);       
+   
+   a = zeros(num_examples,1);          
+   b = 0;                              
+   C = C_new;                          
+   g = zeros(num_examples,1);
+   ind = cell(4,1);
+   ind{UNLEARNED} = 1:num_examples;
+   kernel_evals = 0;
+   perturbations = 0;
+   Q = y_new';
+   Rs = Inf;
+   scale = scale_new;
+   type = type_new;
+   uind = uind_new;
+   X = X_new;                          
+   y = y_new;
+
+else
+   
+   num_examples = size(X,2);
+   num_new_examples = size(X_new,2);
+   
+   a = [a ; zeros(num_new_examples,1)];
+   C = [C ; C_new];
+   g = [g ; zeros(num_new_examples,1)];
+   ind{UNLEARNED} = (1:num_new_examples) + num_examples;
+   
+   % assumes currently that there are no duplicate examples in the data - may not necessarily be true!
+   Q_new = [y_new' ; (y(ind{MARGIN})*y_new').*kernel(X(:,ind{MARGIN}),X_new,type,scale)];
+   
+   Q = [Q Q_new];  
+   uind = [uind ; uind_new];
+   X = [X X_new];
+   y = [y ; y_new];
+   
+   num_examples = num_examples + num_new_examples;
+   
+end;   
+   
+% begin incremental learning - enforce all constraints on each iteration
+num_learned = 1;
+disp('Beginning training.');
+while (any(ind{UNLEARNED}))
+   
+   % randomly select example
+   i = round(rand*(length(ind{UNLEARNED})-1)) + 1;
+   indc = ind{UNLEARNED}(i);
+%  indc = ind{UNLEARNED}(1);
+
+	% learn example
+   learn(indc,1);
+   
+   if (mod(num_learned,50) == 0)
+      s = sprintf('Learned %d examples.',num_learned);
+      disp(s);
+   end;
+   num_learned = num_learned + 1;
+   
+end;
+if (mod(num_learned-1,50) ~= 0)
+   s = sprintf('Learned %d examples.',num_learned-1);
+   disp(s);
+end;
+disp('Training complete!');
+
+% begin incremental learning - perform multiple passes through the data 
+% until all of the examples are learned
+%while (any(ind{UNLEARNED}))
+%   while (any(ind{UNLEARNED}))
+%   
+%      % select example
+%      indc = ind{UNLEARNED}(1);
+%      
+%      % learn example
+%      s = sprintf('\nLearning example %d...',indc);
+%      disp(s);
+%      learn(indc,0);
+%   
+%   end;
+%
+%   % check to see if any reserve vectors are incorrectly classified
+%   % if so, change their status to unlearned
+%   ind_temp = find(g(ind{RESERVE}) < 0);
+%   [ind{RESERVE},ind{UNLEARNED}] = move_ind(ind{RESERVE},ind{UNLEARNED},ind{RESERVE}(ind_temp));
+%   
+%end;
+
+% remove all but the closest reserve vectors from the dataset if necessary
+if (length(ind{RESERVE}) == max_reserve_vectors)
+   ind_keep = [ind{MARGIN} ind{ERROR} ind{RESERVE}];
+   a = a(ind_keep);
+   g = g(ind_keep);
+   Q = Q(:,ind_keep);   
+   uind = uind(ind_keep);
+   X = X(:,ind_keep);
+   y = y(ind_keep);
+   ind{MARGIN} = 1:length(ind{MARGIN});
+   ind{ERROR} = length(ind{MARGIN}) + (1:length(ind{ERROR}));
+   ind{RESERVE} = length(ind{MARGIN}) + length(ind{ERROR}) + (1:length(ind{RESERVE}));
+end;
+
+% summary statistics
+s = sprintf('\nMargin vectors:\t\t%d',length(ind{MARGIN}));
+disp(s);
+s = sprintf('Error vectors:\t\t%d',length(ind{ERROR}));
+disp(s);
+s = sprintf('Reserve vectors:\t%d',length(ind{RESERVE}));
+disp(s);
+s = sprintf('Kernel evaluations:\t%d\n',kevals);
+disp(s);
+
+
+
+% SVMTRAIN2 - Trains a support vector machine in batch mode
+%             using the L1 soft margin approach developed by
+%             Diehl and Cauwenberghs for two-class problems.
+%
+% Syntax: [a,b,g,ind,uind,X_mer,y_mer,Rs,Q] = svmtrain2(X,y,C,type,scale)
+%         [a,b,g,ind,uind,X_mer,y_mer,Rs,Q] = svmtrain2(X,y,C,type,scale,uind)
+%         (trains a new SVM on the given examples)
+%
+%         [a,b,g,ind,uind,X_mer,y_mer,Rs,Q] = svmtrain2(X,y,C)
+%         [a,b,g,ind,uind,X_mer,y_mer,Rs,Q] = svmtrain2(X,y,C,uind)
+%         (trains the current SVM in memory on the given examples)
+%
+%      a: alpha coefficients
+%      b: bias
+%      g: partial derivatives of cost function w.r.t. alpha coefficients
+%    ind: cell array containing indices of margin, error and reserve vectors
+%         ind{1}: indices of margin vectors
+%         ind{2}: indices of error vectors
+%         ind{3}: indices of reserve vectors
+%   uind: column vector of user-defined example indices (used for unlearning specified examples)
+%  X_mer: matrix of margin, error and reserve vectors stored columnwise
+%  y_mer: column vector of class labels (-1/+1) for margin, error and reserve vectors
+%     Rs: inverse of extended kernel matrix for margin vectors
+%      Q: extended kernel matrix for all vectors
+%      X: matrix of training vectors stored columnwise
+%      y: column vector of class labels (-1/+1) for training vectors
+%      C: soft-margin regularization parameter(s)
+%         dimensionality of C       assumption
+%         1-dimensional vector      universal regularization parameter
+%         2-dimensional vector      class-conditional regularization parameters (-1/+1)
+%         n-dimensional vector      regularization parameter per example
+%         (where n = # of examples)
+%   type: kernel type
+%           1: linear kernel        K(x,y) = x'*y
+%         2-4: polynomial kernel    K(x,y) = (scale*x'*y + 1)^type
+%           5: Gaussian kernel with variance 1/(2*scale)
+%  scale: kernel scale
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function [a,b,g,ind,uind,X,y,Rs,Q] = svmtrain2(X_new,y_new,C_new,varargin)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% create a vector containing the regularization parameter 
+% for each example if necessary
+if (length(C_new) == 1)              % same regularization parameter for all examples
+   C_new = C_new*ones(size(y_new));    
+elseif (length(C_new) == 2)          % class-conditional regularization parameters
+   flags = (y_new == -1);
+   C_new = C_new(1)*flags + C_new(2)*(~flags);
+end;
+
+if (nargin >= 5)
+   
+   % define arguments      
+   type_new = varargin{1};
+   scale_new = varargin{2};
+   if (nargin == 6)
+      uind_new = varargin(3);
+   else
+      uind_new = zeros(size(y_new));
+   end;
+         
+   new_model = 1;   
+else
+   
+   % define arguments
+   if (nargin == 4)
+      uind_new = varargin(1);
+   else
+      uind_new = zeros(size(y_new));
+   end;
+      
+   new_model = 0;   
+end;
+
+% define global variables 
+global a;                     % alpha coefficients
+global b;                     % bias
+global C;                     % regularization parameters 
+global deps;                  % jitter factor in kernel matrix
+global g;                     % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;                   % cell array containing indices of margin, error, reserve and unlearned vectors
+global kernel_evals;          % kernel evaluations
+global max_reserve_vectors;   % maximum number of reserve vectors stored
+global perturbations;         % number of perturbations
+global Q;                     % extended kernel matrix for all vectors
+global Rs;                    % inverse of extended kernel matrix for margin vectors   
+global scale;                 % kernel scale
+global type;                  % kernel type
+global uind;                  % user-defined example indices
+global X;                     % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;                     % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+% initialize variables
+deps = 1e-5;
+max_reserve_vectors = 3000;    
+
+if (new_model)
+
+   num_examples = size(X_new,2);       
+   
+   a = zeros(num_examples,1);          
+   b = 0;                              
+   C = C_new;                          
+   g = -ones(num_examples,1);
+   ind = cell(4,1);
+   ind{UNLEARNED} = 1:num_examples;
+   kernel_evals = 0;
+   perturbations = 0;
+   Q = y_new';
+   Rs = Inf;
+   scale = scale_new;
+   type = type_new;
+   uind = uind_new;
+   X = X_new;                          
+   y = y_new;
+
+else
+   
+   num_examples = size(X,2);
+   num_new_examples = size(X_new,2);
+   
+   a = [a ; zeros(num_new_examples,1)];
+   C = [C ; C_new];
+   
+   g_new = y_new.*svmeval(X_new) - 1;
+   g = [g ; g_new];
+   flag = (g_new > 0);
+   indr = find(flag)';
+   indu = find(~flag)';
+   move_indr([],indr+num_examples);
+   ind{UNLEARNED} = indu+num_examples;
+
+   % assumes currently that there are no duplicate examples in the data - may not necessarily be true!
+   if (length(ind{MARGIN}) > 0)
+      Q_new = [y_new' ; (y(ind{MARGIN})*y_new').*kernel(X(:,ind{MARGIN}),X_new,type,scale)];
+   else
+      Q_new = y_new';
+   end;
+   Q = [Q Q_new];   
+   uind = [uind ; uind_new];
+   X = [X X_new];
+   y = [y ; y_new];
+   
+   num_examples = num_examples + num_new_examples;
+   
+end;   
+   
+% perturbation coefficients
+lambda = zeros(num_examples,1);
+lambda(ind{UNLEARNED}) = C(ind{UNLEARNED});
+
+% cached results
+disp('Precomputing results for unlearned vectors.');
+SQl = ((y*y(ind{UNLEARNED})').*kernel(X,X(:,ind{UNLEARNED}),type,scale))*lambda(ind{UNLEARNED}) + deps*lambda;
+Syl = y(ind{UNLEARNED})'*lambda(ind{UNLEARNED});
+    
+p = 0;
+num_MVs = length(ind{MARGIN});
+num_learned = 0;
+disp('Beginning training.');
+i = 0;
+while ((p < 1) | (length(ind{UNLEARNED}) > 0))
+   
+   if (p < 1)
+   
+      perturbations = perturbations + 1;
+   
+      % compute beta and gamma
+      if (num_MVs > 0)
+      
+         v = zeros(num_MVs+1,1);
+         if (p < 1-eps)
+            v(1) = -Syl - sum(y.*a)/(1-p);
+         else
+            v(1) = -Syl;
+         end;
+         v(2:num_MVs+1) = -SQl(ind{MARGIN});
+         beta = Rs*v;
+         gamma = zeros(size(Q,2),1);
+         ind_temp = [ind{ERROR} ind{RESERVE} ind{UNLEARNED}];
+         if (length(ind_temp) > 0)
+            gamma(ind_temp) = Q(:,ind_temp)'*beta + SQl(ind_temp);
+         end;
+         
+      else
+      
+         beta = 0;
+         gamma = SQl;
+                  
+      end;
+        
+      % minimum acceptable parameter change
+      [min_delta_p,indss,cstatus,nstatus] = min_delta_p_s(p,gamma,beta,lambda);
+   
+      % update a, b, g and p
+      if (length(ind{UNLEARNED}) > 0)
+         a(ind{UNLEARNED}) = a(ind{UNLEARNED}) + lambda(ind{UNLEARNED})*min_delta_p;
+      end;
+      if (num_MVs > 0)
+         a(ind{MARGIN}) = a(ind{MARGIN}) + beta(2:num_MVs+1)*min_delta_p;
+      end;   
+      b = b + beta(1)*min_delta_p;
+      g = g + gamma*min_delta_p;
+      p = p + min_delta_p;
+   
+      % perform bookkeeping         
+      indco = bookkeeping(indss,cstatus,nstatus);
+   
+      % update Rs and Q if necessary
+      if (nstatus == MARGIN)
+              
+         num_MVs = num_MVs + 1;
+         if (num_MVs > 1)
+               
+            % compute beta and gamma for indss            
+            beta = -Rs*Q(:,indss);
+            gamma = kernel(X(:,indss),X(:,indss),type,scale) + deps + Q(:,indss)'*beta;
+            
+         end;
+            
+         % expand Rs and Q
+         updateRQ(beta,gamma,indss);
+      
+      elseif (cstatus == MARGIN)      
+              
+         % compress Rs and Q      
+         num_MVs = num_MVs - 1;
+         updateRQ(indco);
+         
+      end;         
+   
+      % update SQl and Syl when the current status of indss is UNLEARNED
+      if (cstatus == UNLEARNED)
+         num_learned = num_learned + 1;
+         if (nstatus == MARGIN)
+            SQl = SQl - Q(num_MVs+1,:)'*lambda(indss);  
+         else
+            SQl = SQl - ((y*y(indss)).*kernel(X,X(:,indss),type,scale))*lambda(indss);
+            SQl(indss) = SQl(indss) - deps*lambda(indss);
+         end;
+         Syl = Syl - y(indss)*lambda(indss);
+         
+         if (mod(num_learned,50) == 0)
+            s = sprintf('Learned %d examples.',num_learned);
+            disp(s);
+         end;
+      end;
+   
+   else
+      
+      % label the remaining unlearned vectors as error vectors
+      num_learned = num_learned + length(ind{UNLEARNED});
+      a(ind{UNLEARNED}) = C(ind{UNLEARNED});
+      [ind{UNLEARNED},ind{ERROR}] = move_ind(ind{UNLEARNED},ind{ERROR},ind{UNLEARNED});
+      
+      if (mod(num_learned,50) == 0)
+         s = sprintf('Learned %d examples.',num_learned);
+         disp(s);
+      end;
+      
+   end;
+   
+end;
+if (mod(num_learned,50) ~= 0)
+   s = sprintf('Learned %d examples.',num_learned);
+   disp(s);
+end;
+disp('Training complete!');
+
+% set g(ind{MARGIN}) to zero
+g(ind{MARGIN}) = 0;
+
+% remove all but the closest reserve vectors from the dataset if necessary
+if (length(ind{RESERVE}) == max_reserve_vectors)
+   ind_keep = [ind{MARGIN} ind{ERROR} ind{RESERVE}];
+   X = X(:,ind_keep);
+   y = y(ind_keep);
+   a = a(ind_keep);
+   g = g(ind_keep);
+   Q = Q(:,ind_keep);   
+   uind = uind(ind_keep);
+   ind{MARGIN} = 1:length(ind{MARGIN});
+   ind{ERROR} = length(ind{MARGIN}) + (1:length(ind{ERROR}));
+   ind{RESERVE} = length(ind{MARGIN}) + length(ind{ERROR}) + (1:length(ind{RESERVE}));
+end;
+
+% summary statistics
+s = sprintf('\nMargin vectors:\t\t%d',length(ind{MARGIN}));
+disp(s);
+s = sprintf('Error vectors:\t\t%d',length(ind{ERROR}));
+disp(s);
+s = sprintf('Reserve vectors:\t%d',length(ind{RESERVE}));
+disp(s);
+s = sprintf('Kernel evaluations:\t%d\n',kevals);
+disp(s);
+
+
+% UNLEARN - Unlearns the given example if it is a margin or error vector. 
+%           If the example is a reserve vector, the SVM remains unchanged
+%           and the example status is changed to unlearned.  
+%
+% Syntax: trans = unlearn(indc)
+%
+%   indc: index of the example to decrement
+%  trans: list of example transitions (index,current status,new status)
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function trans = unlearn(indc)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLEARNED = 4;
+
+% define global variables 
+global a;      % alpha coefficients
+global b;      % bias
+global C;      % regularization parameters
+global deps;   % jitter factor in kernel matrix
+global g;      % partial derivatives of cost function w.r.t. alpha coefficients
+global ind;    % cell array containing indices of margin, error, reserve and unlearned vectors
+global Q;      % extended kernel matrix for all vectors
+global Rs;     % inverse of extended kernel matrix for margin vectors   
+global scale;  % kernel scale
+global type;   % kernel type
+global X;      % matrix of margin, error, reserve and unlearned vectors stored columnwise
+global y;      % column vector of class labels (-1/+1) for margin, error, reserve and unlearned vectors
+
+trans = [];
+
+num_MVs = length(ind{MARGIN});
+if (g(indc) < 0)
+   
+   % remove indc from the indices of error vectors
+   i = find(indc == ind{ERROR});
+   ind{ERROR}(i) = [];
+   
+elseif (g(indc) == 0)
+   
+   % check to see whether indc is labeled as a margin or reserve vector
+   % (when learning examples, if g >= 0, they are immediately labeled
+   % reserve vectors)
+   i = find(indc == ind{MARGIN});
+   ismargin = (length(i) > 0);
+   
+   if (ismargin)
+      ind{MARGIN}(i) = [];
+      num_MVs = num_MVs - 1;
+   
+      % do not enforce the margin vector constraint for the example
+      % being unlearned
+      updateRQ(i+1);
+  else
+      i = find(indc == ind{RESERVE});
+      ind{RESERVE}(i) = [];
+  end;
+   
+else
+   
+   % remove indc from the indices of reserve vectors
+   i = find(indc == ind{RESERVE});
+   ind{RESERVE}(i) = [];
+   
+   % add indc to the indices of unlearned vectors
+   ind{UNLEARNED} = [ind{UNLEARNED} indc];
+   
+end;
+
+if (g(indc) <= 0)   
+   
+   % compute Qcc and Qc if necessary
+   Qc = cell(4,1);
+   if (num_MVs > 0)
+ 	   Qc{MARGIN} = (y(ind{MARGIN})*y(indc)).*kernel(X(:,ind{MARGIN}),X(:,indc),type,scale);
+   end;
+   if (length(ind{ERROR}) > 0)
+  	   Qc{ERROR} = (y(ind{ERROR})*y(indc)).*kernel(X(:,ind{ERROR}),X(:,indc),type,scale);
+   end;
+   if (length(ind{RESERVE}) > 0)
+      Qc{RESERVE} = (y(ind{RESERVE})*y(indc)).*kernel(X(:,ind{RESERVE}),X(:,indc),type,scale);
+   end;
+   if (length(ind{UNLEARNED}) > 0)
+      Qc{UNLEARNED} = (y(ind{UNLEARNED})*y(indc)).*kernel(X(:,ind{UNLEARNED}),X(:,indc),type,scale);
+   end;
+   Qcc = kernel(X(:,indc),X(:,indc),type,scale) + deps;
+
+   % unlearn indc
+   converged = 0;
+   while (~converged)
+         
+      if (num_MVs > 0)  % change in alpha_c permitted
+   
+         % compute Qc, beta and gamma
+		 beta = -Rs*[y(indc) ; Qc{MARGIN}];
+         gamma = zeros(size(Q,2),1);
+         ind_temp = [ind{ERROR} ind{RESERVE} ind{UNLEARNED} indc];
+		 gamma(ind_temp) = [Qc{ERROR} ; Qc{RESERVE} ; Qc{UNLEARNED} ; Qcc] + Q(:,ind_temp)'*beta;
+      
+      else  % change in alpha_c not permitted since the constraint on the sum of the
+            % alphas must be preserved.  only b can change.  
+         
+         % set beta and gamma
+         beta = y(indc);
+         gamma = y(indc)*y;
+         
+      end;
+      
+      % minimum acceptable parameter change (change in alpha_c (num_MVs > 0) or b (num_MVs = 0))
+      [min_delta_param,indss,cstatus,nstatus] = min_delta_acb(indc,gamma,beta,-1,1);
+      converged = (indss == indc);
+      trans = [trans ; [indss cstatus nstatus]];
+      
+      % update a, b and g
+      if (num_MVs > 0)
+         a(indc) = a(indc) + min_delta_param;
+         a(ind{MARGIN}) = a(ind{MARGIN}) + beta(2:num_MVs+1)*min_delta_param;
+      end;   
+      b = b + beta(1)*min_delta_param;
+      g = g + gamma*min_delta_param;
+   
+      if (~converged)
+         
+	      % update Qc and perform bookkeeping         
+  		   ind_temp = find(ind{cstatus} == indss);
+		   Qc{nstatus} = [Qc{nstatus} ; Qc{cstatus}(ind_temp)];
+ 		   Qc{cstatus}(ind_temp) = [];
+   	   [indco,removed_i] = bookkeeping(indss,cstatus,nstatus);
+         if ((nstatus == RESERVE) & (removed_i > 0))
+            Qc{nstatus}(removed_i) = [];
+         end;
+      
+         % update Rs and Q if necessary
+         if (nstatus == MARGIN)
+                     
+            num_MVs = num_MVs + 1;
+            if (num_MVs > 1)
+         
+               % compute beta and gamma for indss            
+               beta = -Rs*Q(:,indss);
+               gamma = kernel(X(:,indss),X(:,indss),type,scale) + deps + Q(:,indss)'*beta;
+            
+            end;
+         
+            % expand Rs and Q
+            updateRQ(beta,gamma,indss);
+                  
+         elseif (cstatus == MARGIN)      
+         
+            % compress Rs and Q      
+            num_MVs = num_MVs - 1;
+            updateRQ(indco);
+         
+         end;
+      else
+      
+         % add indc to the appropriate list of indices
+         ind{nstatus} = [ind{nstatus} indc];      
+      
+         if (nstatus == MARGIN)
+         
+            num_MVs = num_MVs + 1;
+            if (num_MVs > 1)
+         
+               % compute beta and gamma for indss            
+               beta = -Rs*Q(:,indss);
+               gamma = kernel(X(:,indss),X(:,indss),type,scale) + deps + Q(:,indss)'*beta;
+            
+            end;
+          
+            % expand Rs and Q
+            updateRQ(beta,gamma,indss);
+         
+         end;
+      end;
+   
+      % set g(ind{MARGIN}) to zero
+      g(ind{MARGIN}) = 0;
+   
+   end;
+end;
+
+
+% UPDATERQ - Updates Rs and Q accordingly when adding or removing a 
+%            margin vector.  Note: Rs and Q are defined as global
+%            variables.    
+%
+% Syntax: updateRQ(beta,gamma,indc) 
+%         (for adding a margin vector)   
+%         
+%         updateRQ(indc)
+%         (for removing a margin vector)
+%
+%   beta: parameter sensitivities associated with the example indc 
+%  gamma: margin sensitivity associated with the example indc
+%   indc: example/matrix index
+%
+% Version 3.22e -- Comments to diehl@alumni.cmu.edu
+%
+
+function updateRQ(varargin)
+
+% flags for example state
+MARGIN    = 1;
+ERROR     = 2;
+RESERVE   = 3;
+UNLABELED = 4;
+
+% define global variables
+global C; 		% regularization parameters
+global ind;    % cell array containing indices of margin, error, reserve and unlearned vectors
+global deps;   % jitter factor in kernel matrix
+global Q;      % extended kernel matrix for all vectors
+global Rs;     % inverse of extended kernel matrix for margin vectors   
+global scale;  % kernel scale
+global type;   % kernel type
+global X;      % matrix of margin, error and reserve vectors stored columnwise
+global y;      % column vector of class labels (-1/+1) for margin, error and reserve vectors
+
+if (nargin == 3)
+   beta  = varargin{1};
+   gamma = varargin{2};
+   indc = varargin{3};
+   expand = 1;   
+elseif (nargin == 1)
+   indc = varargin{1};
+   expand = 0;   
+else
+   error('updateRQ: Incorrect number of parameters');
+end;
+
+rows = size(Rs,1);
+if (expand)
+   
+   if (gamma < deps)
+      gamma = deps;
+   end;
+   
+   if (rows > 1)
+      Rs = [Rs,zeros(rows,1);zeros(1,rows+1)] + [beta;1]*[beta',1]/gamma;
+   else
+      Rs = [-(kernel(X(:,indc),X(:,indc),type,scale)+deps) y(indc) ; y(indc) 0];
+   end;
+   Q = [Q ; (y(indc)*y').*kernel(X(:,indc),X,type,scale)];
+   Q(rows+1,indc) = Q(rows+1,indc) + deps;
+   
+else
+   
+   if (rows > 2)
+      stripped = [1:indc-1 indc+1:size(Rs,1)]; 
+      Rs = Rs(stripped,stripped)-Rs(stripped,indc)*Rs(indc,stripped)/Rs(indc,indc);
+   else
+      Rs = Inf;
+   end;
+   Q(indc,:) = [];
+     
+end;
+
+
+
+function varargout = normalization(PopObj)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+global normalization_str
+if strcmp(normalization_str, 'normalize')
+    [N, ~] = size(PopObj);
+    a = intercepts(PopObj);
+    PopObj = (PopObj - repmat(min(PopObj, [], 1), size(PopObj, 1), 1)) ./ repmat(a,N,1);
+end
+varargout{1} = PopObj;
+if nargout == 2
+    varargout{2} = a;
+end
+end
+
+function a = intercepts(PopObj)
+[N, M] = size(PopObj);
+%% Find the extreme points
+[~, Choosed(1:M)] = min(PopObj, [], 1);
+L2NormABO = zeros(N, M);
+for i = 1 : M
+    L2NormABO(:, i) = sum(PopObj(:, [1: i - 1, i + 1: M]) .^ 2, 2);
+end
+[~, Choosed(M + 1: 2 * M)] = min(L2NormABO, [], 1);
+[~, Extreme] = max(PopObj(Choosed, :), [], 1);
+Extreme = unique(Choosed(Extreme));
+%% Calculate the intercepts
+if length(Extreme) < M
+    a = max(PopObj, [], 1);
+else
+    lastwarn('');
+    Hyperplane = mldivide(PopObj(Extreme,:), ones(M, 1));
+    [~, msgid] = lastwarn();
+    if strcmp(msgid, 'MATLAB:nearlySingularMatrix')
+        % error('error in normalize');
+    end
+    a = 1 ./ Hyperplane';
+end
+end
+
+function [distance, Allocation] = pair(O, Z, type)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+BLOCK_SIZE = 10000;
+blocks = floor(size(Z, 1) / BLOCK_SIZE);
+B = mat2cell(Z, [BLOCK_SIZE * ones(1, blocks), size(Z, 1) - BLOCK_SIZE * blocks], size(Z, 2));
+dA_set = {};
+for i = 1: numel(B)
+    z = B{i};
+    dA = NaN(size(O, 1), 2);%[distance, Allocation]
+    cor_index = (i - 1) * BLOCK_SIZE + 1: min(i * BLOCK_SIZE, size(Z, 1));
+    Cosine = 1 - pdist2(O, z, 'cosine');
+    if strcmp(type, 'distance')
+        Error2Z = repmat(sqrt(sum(O .^ 2, 2)), 1, size(z, 1)) .* sqrt(1 - Cosine .^ 2);
+    elseif strcmp(type, 'sin')
+        Error2Z = sqrt(1 - Cosine .^ 2);
+    end
+    [dA(:, 1), dA(:, 2)] = min(Error2Z, [], 2);
+    dA(:, 2) = cor_index(dA(:, 2));
+    dA_set{i} = dA;
+end
+d = NaN(size(O, 1), numel(B)); A = NaN(size(O, 1), numel(B));
+for i = 1: numel(B)
+    dA = dA_set{i};
+    d(:, i) = dA(:, 1); A(:, i) = dA(:, 2);
+end
+Allocation = NaN(size(O, 1), 1);
+[distance, I] = min(d, [], 2);
+for i = 1: size(d, 1)
+    Allocation(i) = A(i, I(i));
+end
+end
+
+function archive = update_archive(archive, P, Z, picks, Problem)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+global disable_flag;
+if disable_flag
+    return;
+end
+if ~isempty(archive)
+    P = [archive, P];
+end
+[O, ia, ~] = unique([P.objs], 'rows');
+P = P(ia);
+[index_frontiers, ~] = find_frontiers(O, [P.cons]);
+archive = P(index_frontiers);
+O = [archive.objs];
+if numel(archive) > picks
+    O = normalization(O);
+    %% Associate each frontier solution with one reference point
+    [min_metric, allocation] = pair(O, Z, 'sin');
+    %% Identify the active reference lines
+    index_active_clusters = unique(allocation);
+    %% calculate metric and sort the frontier solutions
+    cluster.center = [];
+    cluster.select_queue = [];
+    cluster = repmat(cluster, numel(index_active_clusters), 1);
+    for i = 1: numel(index_active_clusters)
+        Cluster_F_index = find(allocation == index_active_clusters(i));
+        if numel(Cluster_F_index) == 1
+            ascend_index = 1;
+        else
+            F_metric = min_metric(Cluster_F_index)';
+            if numel(cluster) >= Problem.N
+                [~, ascend_index] = min(F_metric);
+            else
+                [~, ascend_index] = sort(F_metric, 'ascend');
+            end
+        end
+        Cluster_F_index = Cluster_F_index(ascend_index);
+        cluster(i).center = Cluster_F_index(1);
+    end
+    center_index = [cluster.center];
+    archive = [archive(center_index), crowding_pick(archive, picks, 'fast')];
+    [~, ia, ~] = unique([archive.objs], 'rows');
+    archive = archive(ia);
+end
+% fprintf('size of archive: %d\n', numel(archive));
+end
+

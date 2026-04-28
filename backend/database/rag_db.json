@@ -1,5 +1,5 @@
 {
-  "version": "1.4",
+  "version": "1.5",
   "rules": [
     {
       "id": "Bug #1 (Integer Sentinel)",
@@ -365,6 +365,145 @@
       ],
       "always_apply": true,
       "instruction": "You MUST aggressively eliminate Python `for/while` loops that iterate over individuals (N) or dimensions (D). ALWAYS substitute element-wise loops with advanced PyTorch tensor operations: 1. Use `valid_mask = score > threshold` followed by `tensor[valid_mask] = X` instead of `if` statements. 2. Use `torch.where` for conditional assignments. 3. Use Broadcasting and `torch.matmul` (`@`) for pairwise calculations instead of nested loops. DO NOT sacrifice algorithmic mathematical fidelity, but execute it entirely via vectorized bulk operations."
+    },
+    {
+      "id": "Bug #30 (Brutal Static Truncation)",
+      "description": "Sequential truncation loops with dynamic distance updates cause JIT compiler timeouts and massive CPU-GPU sync bottlenecks.",
+      "action": "must",
+      "keywords": [
+        "while sum(Del) < K",
+        "grid density",
+        "sequential peeling",
+        "PESAII",
+        "MOBCA"
+      ],
+      "always_apply": false,
+      "instruction": "You MUST approximate sequential peeling mechanisms using 'Brutal Static Truncation': Calculate the density/distance matrix ONCE, sort it (`argsort` or `lexsort`), and use tensor slicing to delete the worst K individuals simultaneously. NEVER translate them into dynamic `while/for` loops with internal matrix updates."
+    },
+    {
+      "id": "Bug #31 (Tournament Multifit API)",
+      "description": "Incorrect arguments passed to tournament_selection_multifit cause positional shifts or type errors.",
+      "action": "must",
+      "keywords": [
+        "tournament_selection_multifit",
+        "GFMMOEA",
+        "MOEADD"
+      ],
+      "always_apply": false,
+      "instruction": "For `tournament_selection_multifit(num_candidates, fitnesses, ...)`, the first argument MUST be an integer `num_candidates`, and the second argument MUST be a `list` or `tuple` of 1D tensors (e.g., `[fit_1, fit_2]`), NEVER a single stacked 2D tensor."
+    },
+    {
+      "id": "Bug #32 (ASF Penalty Explosion)",
+      "description": "Blindly adding 1e-6 to denominators like ASF weight vectors causes penalties to explode to Infinity.",
+      "action": "must_not",
+      "keywords": [
+        "ASF",
+        "asfFunction",
+        "Achievement Scalarizing Function",
+        "SSCEA"
+      ],
+      "always_apply": false,
+      "instruction": "Do not blindly replace legitimate matrix weight denominators with `1e-6` for safe division, as it causes ASF metrics to explode to infinity. Apply safe division `+1e-6` only to the scaling factor `Znadir - Zideal`."
+    },
+    {
+      "id": "Bug #34 (Monte Carlo HV Sampling)",
+      "description": "Exact hypervolume contribution reduction is incompatible with tensorization for M>2.",
+      "action": "must",
+      "keywords": [
+        "SMSEMOA",
+        "Hypervolume Contribution",
+        "exact HV",
+        "WFG"
+      ],
+      "always_apply": false,
+      "instruction": "For exact Hypervolume (HV) contribution calculations when M>2, you MUST use Monte Carlo sampling. To prevent blind deletion of elite solutions due to sparse sampling: (1) Use a massive sample size (e.g., `num_samples = 1000000`). (2) Implement a tie-breaking mechanism (like Crowding Distance or KNN) for solutions that receive 0 exclusive samples instead of directly using `argmin`."
+    },
+    {
+      "id": "Bug #35 (WHV Proxy Abuse)",
+      "description": "Using bounding box volume as a proxy for Weighted Hypervolume Contribution artificially biases selection to the center.",
+      "action": "must_not",
+      "keywords": [
+        "GCNMOEA",
+        "WHV",
+        "Weighted Hypervolume",
+        "bounding box"
+      ],
+      "always_apply": false,
+      "instruction": "Do NOT replace exclusive hypervolume contribution with a simple bounding box product `prod(ref_point - fit)`. This forces the population to the center of the Pareto front and kills boundary solutions."
+    },
+    {
+      "id": "Bug #36 (Knowledge-guided Discrete State)",
+      "description": "Replacing fitness-guided bitwise flips with uniform random flips destroys knowledge-guided algorithms.",
+      "action": "must",
+      "keywords": [
+        "SparseEA",
+        "sparse mask",
+        "var_fit"
+      ],
+      "always_apply": false,
+      "instruction": "When translating algorithms that maintain discrete boolean Masks guided by variable-wise fitness, crossover/mutation MUST strictly use the fitness probabilities derived by the original algorithm. Do NOT replace this complex sparse logic with naive uniform random flips (`torch.rand() < 0.5`)."
+    },
+    {
+      "id": "Bug #37 (Reference Vector Deletion)",
+      "description": "Using global minimum distance to delete the furthest solution from reference vectors actively destroys boundary diversity.",
+      "action": "must_not",
+      "keywords": [
+        "ARMOEA",
+        "reference vectors",
+        "angle association"
+      ],
+      "always_apply": false,
+      "instruction": "Do not use `min(dim=1)` followed by `argmax` to globally delete the furthest solution from reference vectors. ALWAYS associate solutions to references first, find the MOST crowded reference vector, and delete the solution with the largest density ONLY within that specific subpopulation."
+    },
+    {
+      "id": "Bug #38 (PSO Boundary Clamping)",
+      "description": "Missing velocity and position clamping in Particle Swarm algorithms causes particles to diverge to infinity.",
+      "action": "must",
+      "keywords": [
+        "SMPSO",
+        "Particle Swarm",
+        "pso"
+      ],
+      "always_apply": false,
+      "instruction": "For PSO-based algorithms, velocity and position updates MUST always be followed by strict boundary clamping (`torch.clamp(pos, lb, ub)`). When a position hits the boundary, the corresponding velocity must be inverted or zeroed to prevent escape."
+    },
+    {
+      "id": "Bug #39 (SDE / Distance Masking Bug)",
+      "description": "Incorrectly masking out the upper triangle of pairwise distance matrices makes density estimators asymmetric and order-dependent.",
+      "action": "must",
+      "keywords": [
+        "SDE",
+        "Shifted Distance",
+        "SDE metric"
+      ],
+      "always_apply": false,
+      "instruction": "When computing a pairwise distance matrix (e.g. `Dist = torch.norm(..., dim=-1)`) to find the minimum distance to OTHER individuals for density estimation (like Shifted Distance), you MUST ONLY mask the diagonal. Use `mask = torch.eye(N).bool()` and fill with `torch.inf`. NEVER use `torch.triu(..., diagonal=0)`. (NOTE: This rule DOES NOT apply to SRA, which legitimately requires `triu` masking for stochastic ranking. SRA must strictly use sequential distances)."
+    },
+    {
+      "id": "Bug #40 (Catastrophic Population Shrinkage)",
+      "description": "Truncating the population by taking only Rank 1 individuals without filling up to N causes permanent population collapse.",
+      "action": "must",
+      "keywords": [
+        "PESA-II",
+        "PESA2",
+        "permanent shrink"
+      ],
+      "always_apply": false,
+      "instruction": "In Environmental Selection, you MUST NOT permanently shrink the population size below `pop_size` (N). When truncating, if `Rank 1` has fewer than N individuals, you must iteratively include subsequent ranks (Rank 2, Rank 3, etc.) until exactly N individuals are selected. Never do a hard `self.pop = rank1_pop` unless `len(rank1_pop) == N`. Use a `while count < N:` loop or `torch.argsort()` on combined metrics to ensure exactly N individuals survive."
+    },
+    {
+      "id": "Bug #41 (Universal PyTorch JIT Compliance)",
+      "description": "Any use of .item(), data-dependent for loops, or dynamic mask indexing will cause PyTorch torch.compile (Inductor) to crash or graph break.",
+      "action": "must_not",
+      "keywords": [
+        "item",
+        "for",
+        "loop",
+        "compile",
+        "dynamic"
+      ],
+      "always_apply": true,
+      "instruction": "CRITICAL JIT CONSTRAINT: The generated code will be compiled using `torch.compile()`. You MUST NOT use `.item()`, `.tolist()`, or `.cpu().numpy()` anywhere, as they force graph breaks. You MUST NOT use Python `for` loops whose iteration count or break conditions depend on tensor values (e.g., iterating over a dynamic tensor subset). Use fully vectorized operations like `torch.where`, `torch.topk`, `torch.argsort`, or boolean masking instead."
     }
   ]
 }

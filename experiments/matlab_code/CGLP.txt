@@ -1,0 +1,608 @@
+function newPopulation = addNoise(init_population, Nini, n)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    Num           = size(init_population,1);
+    newPopNumber  = Nini - Num;
+    newPopulation = zeros(newPopNumber,n);  
+    for i = 1 : newPopNumber
+        index  = randperm(Num,1);
+        newPopulation(i,:) = init_population(index,:);
+        index2 = randperm(n,round(n*0.3));
+        temp   = init_population(index,index2) + normrnd(0,0.5,[1 round(n*0.3)]);
+        upp    = temp>1;
+        loww   = temp<0;
+        temp(upp)  = (init_population(index,upp)+1)/2;
+        temp(loww) = (init_population(index,loww)-0)/2;
+        newPopulation(i,index2) = temp;
+    end
+end
+
+classdef CGLP < ALGORITHM
+% <2025> <multi> <real/integer/label/binary/permutation> <dynamic>
+% Correlation-guided layered prediction
+% FEinit --- 10000 --- Function evaluations for initialization
+% taut   ---    10 --- Number of generations for static optimization
+
+%------------------------------- Reference --------------------------------
+% K. Yu, D. Zhang, J. Liang, K. Chen, C. Yue, K. Qiao, and L. Wang. A
+% correlation-guided layered prediction approach for evolutionary dynamic
+% multiobjective optimization. IEEE Transactions on Evolutionary
+% Computation, 2025, 27(5): 1398-1412.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    properties
+        POF_iter;
+        POS_iter;
+        PopX;
+        Pareto;
+    end
+    methods
+        function main(Algorithm, Problem)
+            %% Parameter setting
+            [FEinit,taut] = Algorithm.ParameterSet(10000,10);
+            MaxT      = Problem.maxFE/taut;
+            hisPareto = cell(MaxT,1);
+            hisPopX   = {};
+            hisPop    = {};
+            tipe      = 0;
+            % Reset the number of saved populations (only for dynamic optimization)
+            Algorithm.save = sign(Algorithm.save)*inf;
+
+            %% Generate random population
+            T = 1;
+            Population = Problem.Initialization();
+            Algorithm.POF_iter = cell(1, Problem.maxFE/Problem.N);% 预分配内存
+            Algorithm.POS_iter = cell(1, Problem.maxFE/Problem.N);
+            AllPop = []; 
+            for i = 1 : 2
+                Population  = RMMEDA(Algorithm,Problem,Problem.N,FEinit);
+                hisPopX{T}  = Algorithm.PopX';
+                AllPop      = [AllPop,Population];
+                hisPop{T}.F = Algorithm.Pareto.F';
+                hisPop{T}.X = Algorithm.Pareto.X';
+                [hisPareto,hisPop] = Get_C(hisPop,hisPareto,T);
+                T = T + 1;
+            end
+
+            %% Optimization
+            while Algorithm.NotTerminated(Population)                    
+                if Changed(Problem,Population)
+                    [Population1,pop_LCM,pop_DCM,tipe] = CGLP_pre(Problem,hisPop,T,hisPareto,Problem.N,tipe); 
+                    Population  = RMMEDA(Algorithm,Problem,Problem.N,FEinit,Population1);   
+                    tipe        = selfadjust(Algorithm.PopX',pop_LCM,pop_DCM,tipe);
+                    hisPopX{T}  = Algorithm.PopX';
+                    AllPop      = [AllPop,Population];
+                    hisPop{T}.F = Algorithm.Pareto.F';
+                    hisPop{T}.X = Algorithm.Pareto.X';
+                    [hisPareto,hisPop] = Get_C(hisPop,hisPareto,T);
+                    T = T+1;
+                end
+                if Problem.FE >= Problem.maxFE 
+                    Population = [AllPop,Population]; 
+                    [~,rank]=sort(Population.adds(zeros(length(Population),1))); 
+                    Population = Population(rank); 
+                end
+             end                  
+        end
+    end  
+end
+
+function Population = RMMEDA(Algorithm, Problem,popSize,FEinit,init_pop)
+    Lower = repmat(Problem.lower',1,popSize);
+    Upper = repmat(Problem.upper',1,popSize);
+
+    if nargin==4
+        Population = Problem.Initialization();
+    elseif nargin > 4
+        if size(init_pop,2) < popSize
+            newpop   = addNoise(init_pop, popSize, size(init_pop,2));
+            init_pop = [init_pop' newpop'];
+        else
+            init_pop = init_pop';
+        end
+        init_pop   = max(min(init_pop,Upper),Lower);
+        Population = Problem.Evaluation(init_pop');
+    end
+
+    iter = 1;
+    while Problem.FE<FEinit
+        Offspring  = Operator(Problem, Population);
+        Population = EnvironmentalSelection([Population, Offspring], Problem.N);
+        Algorithm.POF_iter{iter} = Population.objs;
+        Algorithm.POS_iter{iter} = Population.decs;
+        iter = iter + 1;
+    end
+    Algorithm.PopX     = Population.decs;
+    Algorithm.Pareto.F = Population.objs;
+    Algorithm.Pareto.X = Population.decs;
+end
+
+function [POP,pop_LCM,pop_DCM,tipe]=CGLP_pre(Problem,hisPop,T,hisPareto,popSize,tipe)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    NP    = size(hisPop{T-1}.X,2);
+    Lower = repmat(Problem.lower',1,NP);
+    Upper = repmat(Problem.upper',1,NP);
+    ran   = Lower'+rand(size(Upper')).*(Upper-Lower)';
+    ttyh  = pdist2(hisPop{T-1}.F',hisPop{T-2}.F');
+    for ii = 1 : popSize
+        [~,mkl(ii)] = min(ttyh(ii,:));
+    end
+    hisPop{T-2}.X = hisPop{T-2}.X(:,mkl);
+    hisPop{T-2}.F = hisPop{T-2}.F(:,mkl);
+
+    %% Correlation analysis
+    C41  = hisPop{T-1}.X;  % centroid of time K-1
+    C42  = hisPop{T-2}.X;  % centroid of time K-2
+    D41  = C41-C42;  % their difference
+    C11  = mean(hisPop{T-1}.X',1);  % centroid of time K-1
+    C12  = mean(hisPop{T-2}.X',1);  % centroid of time K-2
+    D11  = C11'-C12';  % their difference
+    D41  = [D41;1:popSize];
+    Dd41 = D41;
+    num  = cell(3,1);
+    te   = [];
+    r    = [];
+    x    = [Dd41(1:size(C41,1),:),D11]';
+    for i = 1 : size(Dd41,2)+1
+        x(i,:) = x(i,:)/(x(i,1)+0.0001);
+    end
+    data = x;
+    n    = size(data,1);
+    ck   = data(n,:);
+    m1   = size(ck,1);
+    bj   = data(1:n-1,:);
+    m2   = size(bj,1);
+    for i = 1 : m1
+        for j = 1 : m2
+            te(j,:) = bj(j,:)-ck(i,:);
+        end
+        jc1 = min(min(abs(te')));
+        jc2 = max(max(abs(te')));
+        rho = 0.5;
+        ksi = (jc1+rho*jc2)./(abs(te)+rho*jc2);
+        rt  = sum(ksi')/size(ksi,2);
+        r(i,:) = rt;
+    end
+    [~,rind] = sort(r,'descend');
+    
+    %% Divide three groups
+    num{1} = Dd41(end,rind(1:6/10*popSize));
+    num{2} = Dd41(end,rind(6/10*popSize+1:9/10*popSize));
+    num{3} = Dd41(end,rind(9/10*popSize+1:end));
+    pre_solution = zeros(popSize,size(Lower,1));
+    
+    %% Operator for high correlation group
+    opp  = 1;
+    Cw11 = mean(hisPop{T-1}.X(:,num{opp})',1);  % centroid of time K-1
+    Cw12 = mean(hisPop{T-2}.X(:,num{opp})',1);  % centroid of time K-2
+    Dw11 = Cw11'-Cw12';  % their difference
+    are  = repmat(Dw11',size(num{opp},2),1);
+    pre_solution(num{opp},:) = hisPop{T-1}.X(:,num{opp})'+are;
+    
+    %% Operator for mid correlation group
+    pop_LCM = [];
+    pop_DCM = [];
+    [pre_solution(num{2},:),pop_LCM,pop_DCM,tipe] = DLCM(hisPop{T-1}.X(:,num{2}), hisPop{T-2}.X(:,num{2}),pop_LCM,pop_DCM,tipe);
+    
+    %% Operator for low correlation group
+    if size(hisPareto{T-1},1) > size(num{end},2)
+        pre_solution(num{end},:) = hisPareto{T-1}(1:size(num{end},2),:);
+    else
+        pre_solution(num{end}(1:size(hisPareto{T-1},1)),:) = hisPareto{T-1};
+    end
+    POP = pre_solution(1:popSize,:);
+    POP(POP<Lower'|POP>Upper') = ran(POP<Lower'|POP>Upper');
+end
+
+function [pop,pop1,pop2,tipe] = DLCM(kneeArray1,kneeArray2,pop1,pop2,tipe)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    pietheta  = [];
+    samplePop = [];
+    u         = [];
+    vec       = kneeArray1-kneeArray2;    
+    Cw11      = mean(kneeArray1',1);  % centroid of time K-1
+    Cw12      = mean(kneeArray2',1);  % centroid of time K-2
+    Dw11      = Cw11'-Cw12';  % their difference    
+    for ok = 1 : size(kneeArray1,2)
+        bi(ok) = norm(kneeArray1(:,ok)-kneeArray2(:,ok))./norm(Dw11);
+    end
+    biO  = mean(bi)/size(bi,2);            
+    bi   = bi+normrnd(0,biO);
+    bian = abs(bi)'.*repmat(Dw11',size(kneeArray1,2),1);
+    for j = 1 : size(vec,2)    
+        for i = 1 : size(vec,1)-2
+            kjl   = vec(i+1:end,j);
+            fenzi = sqrt(sum(kjl.^2));
+            pietheta(i,j) = atan(fenzi/(vec(i,j)));
+        end
+    end
+    i = size(pietheta,1)+1;
+    for j = 1 : size(vec,2)    
+       kjl = vec(i+1,j);
+       pietheta(i,j) = atan(kjl/(vec(i,j)));
+    end
+     
+    for i = 1 : size(vec,1)-2
+       kjl   = Dw11(i+1:end);
+       fenzi = sqrt(sum(kjl.^2));
+       DW_pietheta(i) = atan(fenzi/(Dw11(i)));
+       if DW_pietheta(i) < 0
+           DW_pietheta(i) = DW_pietheta(i)+pi;
+       end
+    end
+    i   = size(DW_pietheta,2)+1;
+    kjl = Dw11(i+1);
+    DW_pietheta(i) = atan(kjl/(Dw11(i)));     
+    
+    vecb = vec';
+    for num = 1 : size(kneeArray1,2)+1
+        if num ~= size(kneeArray1,2)+1
+            fi = reshape(pietheta(:,num),[size(pietheta,1) 1]);
+            for i = 1 : size(vec,1)
+                if i == 1
+                    u(i) = norm(vecb(num,:))*cos(fi(i));
+                elseif i < size(vec,1)
+                    temp = 1;
+                    for j = 1 : i-1
+                        temp = temp*sin(fi(j));
+                    end
+                    u(i) = norm(vecb(num,:))*temp*cos(fi(i));
+                else
+                    temp = 1;
+                    for j = 1 : i-1
+                        temp = temp*sin(fi(j));
+                    end
+                    u(i) = norm(vecb(num,:))*temp;
+                end
+            end
+            samplePop(:,num) = u;
+        else
+            fi = reshape(DW_pietheta,[size(pietheta,1) 1]);
+            for i = 1 : size(vec,1)
+                if i == 1
+                    u(i) = norm(Dw11)*cos(fi(i));
+                elseif i < size(vec,1)
+                    temp = 1;
+                    for j = 1 : i-1
+                        temp = temp*sin(fi(j));
+                    end
+                    u(i) = norm(Dw11)*temp*cos(fi(i));
+                else
+                    temp = 1;
+                    for j = 1 : i-1
+                        temp = temp*sin(fi(j));
+                    end
+                    u(i) = norm(Dw11)*temp;
+                end
+            end
+            D412 = u;
+        end      
+    end    
+    pam    = sum(kneeArray2+samplePop-kneeArray1,1);
+    D41pam = sum(Cw12+D412-Cw11); 
+    for k = 1 : size(pam,2)
+        if abs(pam(k)) > 1
+            if pietheta(end,k) > 0
+                pietheta(end,k) = pietheta(end,k)-pi;
+            else
+                pietheta(end,k) = pietheta(end,k)+pi;
+            end
+        end
+    end
+    
+    if abs(D41pam) > 1
+        if DW_pietheta(end) > 0
+            DW_pietheta(end) = DW_pietheta(end)-pi;
+        else
+            DW_pietheta(end) = DW_pietheta(end)+pi;
+        end
+    end
+      
+    samplePop = [];
+    u = [];
+    for num = 1 : size(kneeArray1,2)
+        fi = reshape(pietheta(:,num),[size(pietheta,1) 1]);
+        fi = 1/2*(DW_pietheta'+fi);
+        for i = 1 : size(vec,1)
+            if i == 1
+                u(i) = norm(bian(num,:))*cos(fi(i));
+            elseif i < size(vec,1)
+                temp = 1;
+                for j = 1 : i-1
+                    temp = temp*sin(fi(j));
+                end
+                u(i) = norm(bian(num,:))*temp*cos(fi(i));
+            else
+                temp = 1;
+                for j = 1 : i-1
+                    temp = temp*sin(fi(j));
+                end
+                u(i) = norm(bian(num,:))*temp;
+            end
+        end
+        samplePop(:,num) = u;
+    end    
+    pop = mod(abs(kneeArray1+samplePop),1)'; %DCM
+    if tipe == 0
+        selecta = size(pop,1)/2;
+        tipe    = selecta;
+    else
+        selecta = tipe;
+    end 
+    CP_gl   = selecta/size(pop,1);
+    CP_num  = find(rand(1,size(pop,1))<CP_gl);
+    DCM_num = setdiff(1:size(pop,1),CP_num);
+    pop(CP_num,:) = kneeArray1(:,CP_num)'+bian(CP_num,:); %CP
+    pop1 = [pop1;pop(CP_num,:)];
+    pop2 = [pop2;pop(DCM_num,:)];
+end
+
+function Population = EnvironmentalSelection(Population,N)
+% The environmental selection of RM-MEDA
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    %% Non-dominated sorting
+    [FrontNo,MaxFNo] = NDSort(Population.objs,N);
+    Next = FrontNo < MaxFNo;
+
+    %% Delete the solutions in the last front by crowding distance
+    Last = find(FrontNo==MaxFNo);
+    while length(Last) > N - sum(Next)
+        [~,worst]   = min(CrowdingDistance(Population(Last).objs));
+        Last(worst) = [];
+    end
+    Next(Last) = true;
+    % Population for next generation
+    Population = Population(Next);
+end
+
+function [Mm,hisPareto] = Get_C(hisPareto,Mm,T)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    POF       = hisPareto{T}.F';
+    POS       = hisPareto{T}.X';
+    tempPof   = POF;
+    tempPos   = POS;
+    [~,index] = sort(POF(:,1));
+    for i = 1 : length(index)
+        POF(i,:) = tempPof(index(i),:);
+        POS(i,:) = tempPos(index(i),:);
+    end
+    hisPareto{T}.F = POF';
+    hisPareto{T}.X = POS';
+    
+    curr_FrontNo  = NDSort(hisPareto{T}.F',inf);
+    curr_NDS1     = [hisPareto{T}.X(:,find(curr_FrontNo==1));find(curr_FrontNo==1)]';
+    curr_NDF1     = [hisPareto{T}.F(:,find(curr_FrontNo==1));find(curr_FrontNo==1)]';
+    curr_CrowdDis = CrowdingDistance(curr_NDF1(:,1:size(tempPof,2)));
+    [~,sort_curr] = sort(curr_CrowdDis','descend');
+    curr_NDS      = curr_NDS1(sort_curr,1:size(tempPos,2));
+    Mm{T}         = curr_NDS;
+end
+
+function [Model,probability] = LocalPCA(PopDec,M,K)
+% Partitioning the population by Local PCA algorithm
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+% This function is modified from the code in
+% http://dces.essex.ac.uk/staff/zhang/IntrotoResearch/RegEDA.htm
+
+    [N,D] = size(PopDec);
+    Model = struct('mean',   num2cell(PopDec(1:K,:),2),...  % The mean of the model
+                   'PI',     eye(D),...                     % The matrix PI
+                   'eVector',[],...                         % The eigenvectors
+                   'eValue', [],...                         % The eigenvalues
+                   'a',      [],...                         % The lower bound of the projections
+                   'b',      []);                           % The upper bound of the projections
+    
+    %% Modeling
+    for iter = 1 : 50
+        % Calculte the distance between each solution and its projection in
+        % affine principal subspace of each cluster
+        distance = zeros(N,K);
+        for k = 1 : K
+            distance(:,k) = sum((PopDec-repmat(Model(k).mean,N,1))*Model(k).PI.*(PopDec-repmat(Model(k).mean,N,1)),2);
+        end
+        % Partition
+        [~,partition] = min(distance,[],2);
+        % Update the model of each cluster
+        updated = false(1,K);
+        for k = 1 : K
+            oldMean = Model(k).mean;
+            current = partition == k;
+            if sum(current) < 2
+                if ~any(current)
+                    current = randi(N);
+                end
+                Model(k).mean    = PopDec(current,:);
+                Model(k).PI      = eye(D);
+                Model(k).eVector = [];
+                Model(k).eValue  = [];
+            else
+                Model(k).mean    = mean(PopDec(current,:),1);
+                [eVector,eValue] = eig(cov(PopDec(current,:)-repmat(Model(k).mean,sum(current),1)));
+                [eValue,rank]    = sort(diag(eValue),'descend');
+                Model(k).eValue  = real(eValue);
+                Model(k).eVector = real(eVector(:,rank));
+                Model(k).PI      = Model(k).eVector(:,M:end)*Model(k).eVector(:,M:end)';
+            end
+            updated(k) = ~any(current) || sqrt(sum((oldMean-Model(k).mean).^2)) > 1e-5;
+        end
+        % Break if no change is made
+        if ~any(updated)
+            break;
+        end
+    end
+
+	%% Calculate the smallest hyper-rectangle of each model
+    for k = 1 : K
+        if ~isempty(Model(k).eVector)
+            hyperRectangle = (PopDec(partition==k,:)-repmat(Model(k).mean,sum(partition==k),1))*Model(k).eVector(:,1:M-1);
+            Model(k).a     = min(hyperRectangle,[],1);
+            Model(k).b     = max(hyperRectangle,[],1);
+        else
+            Model(k).a = zeros(1,M-1);
+            Model(k).b = zeros(1,M-1);
+        end
+    end
+    
+    %% Calculate the probability of each cluster for reproduction
+    % Calculate the volume of each cluster
+    volume = prod(cat(1,Model.b)-cat(1,Model.a),2);
+    % Calculate the cumulative probability of each cluster
+    probability = cumsum(volume/sum(volume));
+end
+
+function Offspring = Operator(Problem,Population,K)
+% Generate offsprings by the models
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+% This function is modified from the code in
+% http://dces.essex.ac.uk/staff/zhang/IntrotoResearch/RegEDA.htm
+
+    %% Parameter setting
+    if nargin < 3
+        K = 5;
+    end
+    PopDec = Population.decs;
+    [N,D]  = size(PopDec);
+    M      = length(Population(1).obj);
+    
+    %% Modeling
+    [Model,probability] = LocalPCA(PopDec,M,K);
+
+    %% Reproduction
+    OffspringDec = zeros(N,D);
+    % Generate new trial solutions one by one
+    for i = 1 : N
+        % Select one cluster by Roulette-wheel selection
+        k = find(rand<=probability,1);
+        % Generate one offspring
+        if ~isempty(Model(k).eVector)
+            lower = Model(k).a - 0.25*(Model(k).b-Model(k).a);
+            upper = Model(k).b + 0.25*(Model(k).b-Model(k).a);
+            trial = rand(1,M-1).*(upper-lower) + lower;
+            sigma = sum(abs(Model(k).eValue(M:D)))/(D-M+1);
+            OffspringDec(i,:) = Model(k).mean + trial*Model(k).eVector(:,1:M-1)' + randn(1,D)*sqrt(sigma);
+        else
+            OffspringDec(i,:) = Model(k).mean + randn(1,D);
+        end
+    end
+    Offspring = Problem.Evaluation(OffspringDec);
+end
+
+function tipe = selfadjust(PopX,pop1,pop2,tipe)
+
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    mkl1  = [];
+    mkl2  = [];
+    ttyh1 = pdist2(pop1,PopX');
+    for ii = 1 : size(ttyh1,1)
+        [mkl1(ii),~] = min(ttyh1(ii,:));
+    end
+    ggg1 = find(isnan(mkl1));
+    if ~isempty(ggg1)
+        mkl1(ggg1) = [];
+        g1 = size(ttyh1,1)-size(ggg1,2);
+    else
+        g1 = size(ttyh1,1);
+    end
+    junzh1 = sum(mkl1)/g1;
+    
+    ttyh2 = pdist2(pop2,PopX');
+    for ii = 1 : size(ttyh2,1)
+        [mkl2(ii),~] = min(ttyh2(ii,:));
+    end
+    ggg2 = find(isnan(mkl2));
+    if ~isempty(ggg2)
+        mkl2(ggg2) = [];
+        g2 = size(ttyh2,1)-size(ggg2,2);
+    else
+        g2 = size(ttyh2,1);
+    end
+    junzh2 = sum(mkl2)/g2;
+    
+    if junzh1 < junzh2
+        if g2 > 3
+            tipe = tipe+1;
+        end
+    else
+        if g1>3
+            tipe = tipe-1;
+        end
+    end
+end
+

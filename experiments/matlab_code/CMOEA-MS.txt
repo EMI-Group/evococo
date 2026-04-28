@@ -1,0 +1,183 @@
+function Fitness = CalFitness(PopObj,CV)
+% Calculate the fitness of each solution
+
+%--------------------------------------------------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB Platform
+% for Evolutionary Multi-Objective Optimization [Educational Forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    N = size(PopObj,1);
+    if nargin < 2
+        CV = zeros(size(PopObj,1),1);
+    end
+    
+   %% Detect the dominance relation between each two solutions
+    Dominate = false(N);
+    for i = 1 : N-1
+        for j = i+1 : N
+            if CV(i) < CV(j)
+                Dominate(i,j) = true;
+            elseif CV(i) > CV(j)
+                Dominate(j,i) = true;
+            else
+                k = any(PopObj(i,:)<PopObj(j,:)) - any(PopObj(i,:)>PopObj(j,:));
+                if k == 1
+                    Dominate(i,j) = true;
+                elseif k == -1
+                    Dominate(j,i) = true;
+                end
+            end
+        end
+    end
+    
+   %% Calculate S(i)
+    S = sum(Dominate,2);
+    
+    %% Calculate R(i)
+    R = zeros(1,N);
+    for i = 1 : N
+        R(i) = sum(S(Dominate(:,i)));
+    end
+    
+   %% Calculate D(i)
+    Distance = pdist2(real(PopObj),real(PopObj),'cosine');
+    Distance(logical(eye(length(Distance)))) = inf;
+    Distance = sort(Distance,2);
+    D = 1./(Distance(:,floor(sqrt(N)))+2);
+    
+   %% Calculate the fitnesses
+    Fitness = R + D';
+end
+
+function SDE = CalSDE(PopObj)
+% Calculate the value of SDE of each solution
+
+%--------------------------------------------------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB Platform
+% for Evolutionary Multi-Objective Optimization [Educational Forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    N = size(PopObj,1);   
+    Zmin   = min(PopObj,[],1);
+    Zmax   = max(PopObj);
+    PopObj = (PopObj-repmat(Zmin,N,1))./(repmat(Zmax,N,1)-repmat(Zmin,N,1));
+    SDE = zeros(1,N);
+    for i = 1 : N
+        SPopuObj = PopObj;
+        Temp     = repmat(PopObj(i,:),N,1);
+        Shifted  = PopObj < Temp;
+        SPopuObj(Shifted) = Temp(Shifted);                                    
+        Distance  = pdist2(real(PopObj(i,:)),real(SPopuObj));
+        [~,index] = sort(Distance,2);
+        Dk = Distance(index(floor(sqrt(N))+1)); % Dk denotes the distance of solution i and its floor(sqrt(N)+1)-th nearest neighbour
+        SDE(i)=1./(Dk+2);
+    end
+end
+
+classdef CMOEAMS < ALGORITHM
+% <2022> <multi> <real/integer/label/binary/permutation> <constrained>
+% Constrained multiobjective evolutionary algorithm with multiple stages
+% type   ---   1 --- Type of operator (1. GA 2. DE)
+% lambda --- 0.5 --- Parameter for determining the current stage
+
+%------------------------------- Reference --------------------------------
+% Y. Tian, Y. Zhang, Y. Su, X. Zhang, K. C. Tan, and Y. Jin. Balancing
+% objective optimization and constraint satisfaction in constrained
+% evolutionary multi-objective optimization. IEEE Transactions on
+% Cybernetics, 2022, 52(9): 9559-9572.
+%------------------------------- Copyright --------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB platform
+% for evolutionary multi-objective optimization [educational forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+    methods
+        function main(Algorithm,Problem)
+            %% Parameter setting
+        	[type,lambda] = Algorithm.ParameterSet(1,0.5);
+
+           %% Generate random population
+            Population = Problem.Initialization();
+            Fitness    = CalFitness([CalSDE(Population.objs)',CalCV(Population.cons)]);
+
+            %% Optimization
+            while Algorithm.NotTerminated(Population)
+                if type == 1
+                    MatingPool = TournamentSelection(2,Problem.N,Fitness);  
+                    Offspring  = OperatorGA(Problem,Population(MatingPool));
+                elseif type == 2
+                    Mat1 = TournamentSelection(2,Problem.N,Fitness);
+                    Mat2 = TournamentSelection(2,Problem.N,Fitness);
+                    Offspring = OperatorDE(Problem,Population,Population(Mat1),Population(Mat2));
+                end
+                Q  = [Population,Offspring];
+                CV = CalCV(Q.cons);
+                if mean(CV<=0) > lambda && Problem.FE >= 0.1*Problem.maxFE
+                    Fitness = CalFitness(Q.objs,CV);
+                else
+                    Fitness = CalFitness([CalSDE(Q.objs)',CV]);
+                end
+                [Population,Fitness] = EnvironmentalSelection(Fitness,Q,Problem.N);
+            end
+        end
+    end
+end
+
+function CV = CalCV(CV_Original)
+    CV_Original = max(CV_Original,0);
+    CV = CV_Original./max(CV_Original,[],1);
+    CV(:,isnan(CV(1,:))) = 0;
+    CV = mean(CV,2);
+end
+
+function [Population,Fitness] = EnvironmentalSelection(Fitness,Population,N)
+% The environmental selection of CMOEA-MS
+
+%--------------------------------------------------------------------------
+% Copyright (c) 2025 BIMK Group. You are free to use the PlatEMO for
+% research purposes. All publications which use this platform or any code
+% in the platform should acknowledge the use of "PlatEMO" and reference "Ye
+% Tian, Ran Cheng, Xingyi Zhang, and Yaochu Jin, PlatEMO: A MATLAB Platform
+% for Evolutionary Multi-Objective Optimization [Educational Forum], IEEE
+% Computational Intelligence Magazine, 2017, 12(4): 73-87".
+%--------------------------------------------------------------------------
+
+   %% Environmental selection
+    Next = Fitness < 1;
+    if sum(Next) < N
+        [~,Rank] = sort(Fitness);
+        Next(Rank(1:N)) = true;
+    elseif sum(Next) > N
+        Del  = Truncation(Population(Next).objs,sum(Next)-N);
+        Temp = find(Next);
+        Next(Temp(Del)) = false;
+    end
+    Population = Population(Next);
+    Fitness    = Fitness(Next);
+end
+
+function Del = Truncation(PopObj,K)
+% Select part of the solutions by truncation
+
+    Distance = pdist2(PopObj,PopObj,'cosine');
+    Distance(logical(eye(length(Distance)))) = inf;
+    Del = false(1,size(PopObj,1));
+    while sum(Del) < K
+        Remain = find(~Del);
+        Temp = sort(Distance(Remain,Remain),2);
+        [~,Rank] = sortrows(Temp);
+        Del(Remain(Rank(1))) = true;
+    end
+end
+
