@@ -74,7 +74,7 @@ IGNORE_RUFF_CODES = [
 ]
 
 # --- Cleanup Settings ---
-MAX_RETAINED_WORKSPACES = 150
+MAX_RETAINED_WORKSPACES = 300
 
 # --- Path Configurations ---
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
