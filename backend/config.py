@@ -9,8 +9,9 @@ NUM_BRANCHES = 6
 
 # --- LLM Generation Settings ---
 # Reasoning effort for supported models (e.g., o1/o3-mini).
-# Options: "low", "medium", "high"
-REASONING_EFFORT = "low"
+# Standard Options: "low", "medium", "high"
+# Special Option: "minimal" (Exclusive to Gemini 3 Flash models via LiteLLM for absolute minimum thinking)
+REASONING_EFFORT = "minimal"
 
 LLM_PROVIDERS = {
     "litellm": {
