@@ -3,6 +3,27 @@
 EvoCoder is a lightweight local application with a **FastAPI backend** and a **browser-based frontend**.
 The backend provides API services, while the frontend interacts with it through a simple web interface.
 
+## Configuration
+
+Before running the application, you need to configure your LLM providers. Create a `.env` file in the project root directory with the following format:
+
+```env
+# --- LLM Provider Selection ---
+# Switch this to 'litellm', 'zhipu', 'moonshot', 'deepseek-v4-pro', or 'deepseek-v4-flash'
+ACTIVE_LLM_PROVIDER=zhipu
+
+# --- Global LLM Settings ---
+OPENAI_TEMPERATURE=0.2
+
+# --- API Keys ---
+LITELLM_API_KEY=your_litellm_api_key_here
+ZHIPU_API_KEY=your_zhipu_api_key_here
+MOONSHOT_API_KEY=your_moonshot_api_key_here
+DEEPSEEK_API_KEY=your_deepseek_api_key_here
+```
+
+To switch models, simply change the `ACTIVE_LLM_PROVIDER` value.
+
 ## Running the Backend
 
 Start the backend server from the project root directory:
