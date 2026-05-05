@@ -15,27 +15,27 @@ REASONING_EFFORT = "minimal"
 
 LLM_PROVIDERS = {
     "litellm": {
-        "base_url": "https://litellm.975738.xyz/v1",
+        "base_url": os.getenv("LITELLM_BASE_URL", "https://litellm.975738.xyz/v1"),
         "model": "gemini/gemini-3-flash-preview",
         "api_key_env": "LITELLM_API_KEY"
     },
     "zhipu": {
-        "base_url": "https://open.bigmodel.cn/api/paas/v4/",
+        "base_url": os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"),
         "model": "GLM-4.7",
         "api_key_env": "ZHIPU_API_KEY"
     },
     "moonshot": {
-        "base_url": "https://api.moonshot.cn/v1",
+        "base_url": os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1"),
         "model": "kimi-k2.6",
         "api_key_env": "MOONSHOT_API_KEY"
     },
     "deepseek-v4-pro": {
-        "base_url": "https://api.deepseek.com",
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         "model": "deepseek-v4-pro",
         "api_key_env": "DEEPSEEK_API_KEY"
     },
     "deepseek-v4-flash": {
-        "base_url": "https://api.deepseek.com",
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         "model": "deepseek-v4-flash",
         "api_key_env": "DEEPSEEK_API_KEY"
     }
