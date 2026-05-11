@@ -213,5 +213,5 @@ run_history/
 experiments/benchmark_results/
 experiments/baselines/
 experiments/benchmark_results_final/
-environments/Untested_High_Algorithms
-environments/benchmark_results_untested
+experiments/Untested_High_Algorithms
+experiments/benchmark_results_untested
