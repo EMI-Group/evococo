@@ -215,3 +215,6 @@ experiments/baselines/
 experiments/benchmark_results_final/
 experiments/Untested_High_Algorithms
 experiments/benchmark_results_untested
+experiments/formal_experiment_results/
+experiments/formal_matlab_algorithms/
+experiments/formal_experiment_algorithms
