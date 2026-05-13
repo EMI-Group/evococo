@@ -6,3 +6,4 @@ websockets
 watchfiles
 torch
 evox
+openai
