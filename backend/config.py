@@ -15,7 +15,7 @@ REASONING_EFFORT = "minimal"
 
 LLM_PROVIDERS = {
     "litellm": {
-        "base_url": os.getenv("LITELLM_BASE_URL", "https://litellm.975738.xyz/v1"),
+        "base_url": os.getenv("LITELLM_BASE_URL", "http://localhost:4000"),
         "model": "gemini/gemini-3-flash-preview",
         "api_key_env": "LITELLM_API_KEY"
     },
