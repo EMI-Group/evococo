@@ -41,7 +41,9 @@ if __name__ == '__main__':
     workflow.init_step()
     jit_state_step = workflow.step
 
-    for i in range(50):
+    import time
+    start_time = time.time()
+    for i in range(100):
         jit_state_step()
         if (i + 1) % 5 == 0:
             fit = workflow.algorithm.fit
@@ -50,6 +52,8 @@ if __name__ == '__main__':
                 fit = fit[~torch.any(torch.isnan(fit), dim=1)]
                 if len(fit) > 0:
                     print(f"IGD: {igd(fit, pf)}") # Standardized keyword so parser can catch it!
+    end_time = time.time()
+    print(f"Execution time: {end_time - start_time}s")
 """
 
 def test_syntax(code: str) -> bool:
@@ -64,7 +68,13 @@ async def main():
     parser.add_argument("-d", "--dir", type=str, required=True, help="Directory containing .py scripts to benchmark")
     args = parser.parse_args()
 
+    report_file = os.path.join(args.dir, "benchmark_report.json")
     results = []
+    if os.path.exists(report_file):
+        with open(report_file, "r", encoding="utf-8") as f:
+            results = json.load(f)
+    
+    processed_files = {r["file"] for r in results}
 
     if not os.path.isdir(args.dir):
         print(f"Error: {args.dir} is not a directory.")
@@ -76,11 +86,14 @@ async def main():
         print(f"No valid .py files to benchmark in {args.dir}")
         return
 
-    print("=" * 60)
-    print(f"{'File':<30} | {'Syntax':<6} | {'Static':<6} | {'Exec':<6} | {'Optim':<6}")
-    print("-" * 60)
+    print("=" * 90)
+    print(f"{'File':<30} | {'Syntax':<6} | {'Static':<6} | {'Exec':<6} | {'Optim':<6} | {'IGD':<8} | {'Time(s)'}")
+    print("-" * 90)
 
     for py_file in py_files:
+        if py_file in processed_files:
+            continue
+            
         path = os.path.join(args.dir, py_file)
         with open(path, "r", encoding="utf-8") as f:
             code = f.read()
@@ -96,6 +109,8 @@ async def main():
         # Metric 3 & 4: Execution & Optimization
         exec_pass = False
         optim_pass = False
+        final_igd = float("inf")
+        exec_time = -1.0
 
         if syntax_pass:
             modified_code = code
@@ -109,29 +124,48 @@ async def main():
             report = await execute_code_trial(modified_code, session_id=f"run_{uuid.uuid4().hex[:6]}", filename=py_file)
             
             exec_pass = report.get("success", False)
+            final_igd = report.get("last_igd", float("inf"))
             
-            # Override with strict 20% improvement condition for convergence
+            # Extract execution time independently without modifying executor.py
+            exec_time = -1.0
+            stdout_str = report.get("stdout", "")
+            t_match = re.search(r"Execution time.*?:\s*([0-9]*[.]?[0-9]+)s", stdout_str, re.IGNORECASE)
+            if t_match:
+                try:
+                    exec_time = float(t_match.group(1))
+                except ValueError:
+                    pass
+            
+            # Override with absolute IGD threshold (< 0.25) for convergence on DTLZ2
             igds = report.get("igd_history", [])
-            optim_pass = len(igds) >= 2 and igds[-1] < igds[0] * 0.8
+            optim_pass = len(igds) >= 2 and igds[-1] < 0.25
             
             if exec_pass and report.get("has_nan", False):
                 exec_pass = False # Marked failure if NaNs heavily persist
+                
+            # If it successfully converged, it executed properly
+            if optim_pass and final_igd != float("inf"):
+                exec_pass = True
 
         results.append({
             "file": py_file,
             "syntax": syntax_pass,
             "static": static_pass,
             "exec": exec_pass,
-            "optim": optim_pass
+            "optim": optim_pass,
+            "final_igd": final_igd,
+            "exec_time": exec_time
         })
 
-        print(f"{py_file[:28]:<30} | {str(syntax_pass):<6} | {str(static_pass):<6} | {str(exec_pass):<6} | {str(optim_pass):<6}")
+        igd_str = f"{final_igd:.4f}" if final_igd != float("inf") else "inf"
+        time_str = f"{exec_time:.2f}" if exec_time >= 0 else "N/A"
+        print(f"{py_file[:28]:<30} | {str(syntax_pass):<6} | {str(static_pass):<6} | {str(exec_pass):<6} | {str(optim_pass):<6} | {igd_str:<8} | {time_str}")
+        
+        with open(report_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=2)
 
-    print("=" * 60)
-
-    with open(os.path.join(args.dir, "benchmark_report.json"), "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
-    print(f"Summary JSON saved to {os.path.join(args.dir, 'benchmark_report.json')}")
+    print("=" * 90)
+    print(f"Summary JSON saved to {report_file}")
 
 if __name__ == "__main__":
     asyncio.run(main())

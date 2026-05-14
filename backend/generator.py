@@ -5,15 +5,21 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
+from .config import REASONING_EFFORT, LLM_PROVIDERS
+
 # 1. Load environment variables
 load_dotenv()
 
 # 2. Configuration
-API_KEY = os.getenv("OPENAI_API_KEY")
-BASE_URL = os.getenv("OPENAI_BASE_URL")
-# Default model configuration
-MODEL_NAME = os.getenv("OPENAI_MODEL")
-# MODEL_NAME = os.getenv("OPENAI_MODEL", "gemini-2.0-flash-exp")
+ACTIVE_PROVIDER = os.getenv("ACTIVE_LLM_PROVIDER", "litellm")
+if ACTIVE_PROVIDER not in LLM_PROVIDERS:
+    raise ValueError(f"Unknown LLM provider: {ACTIVE_PROVIDER}")
+
+provider_config = LLM_PROVIDERS[ACTIVE_PROVIDER]
+
+API_KEY = os.getenv(provider_config["api_key_env"])
+BASE_URL = provider_config["base_url"]
+MODEL_NAME = provider_config["model"]
 TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
 
 # 3. Initialize OpenAI Async Client
@@ -77,7 +83,7 @@ async def generate_llm_response(
             messages=[{"role": "user", "content": prompt_content}],
             temperature=TEMPERATURE,
             stream=False,
-            extra_body={"reasoning_effort": "minimal"},
+            extra_body={"reasoning_effort": REASONING_EFFORT},
             **kwargs_api,
         )
 

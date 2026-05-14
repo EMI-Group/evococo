@@ -213,3 +213,8 @@ run_history/
 experiments/benchmark_results/
 experiments/baselines/
 experiments/benchmark_results_final/
+experiments/Untested_High_Algorithms
+experiments/benchmark_results_untested
+experiments/formal_experiment_results/
+experiments/formal_matlab_algorithms/
+experiments/repeat1_algorithms_archive/

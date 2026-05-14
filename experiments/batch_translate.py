@@ -26,6 +26,13 @@ async def process_file(file_path, num_repeats, output_dir=None):
     
     for i in range(num_repeats):
         run_idx = i + 1
+        
+        if output_dir:
+            out_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}.py")
+            if os.path.exists(out_file):
+                print(f"\n--- Run {run_idx}/{num_repeats} for {algo_name} already exists, skipping ---")
+                continue
+                
         print(f"\n--- Run {run_idx}/{num_repeats} for {algo_name} ---")
         
         final_code_captured = []

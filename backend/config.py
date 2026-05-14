@@ -7,6 +7,40 @@ import os
 # --- Tournament Engine Settings ---
 NUM_BRANCHES = 6
 
+# --- LLM Generation Settings ---
+# Reasoning effort for supported models (e.g., o1/o3-mini).
+# Standard Options: "low", "medium", "high"
+# Special Option: "minimal" (Exclusive to Gemini 3 Flash models via LiteLLM for absolute minimum thinking)
+REASONING_EFFORT = "minimal"
+
+LLM_PROVIDERS = {
+    "litellm": {
+        "base_url": os.getenv("LITELLM_BASE_URL", "http://localhost:4000"),
+        "model": "gemini/gemini-3-flash-preview",
+        "api_key_env": "LITELLM_API_KEY"
+    },
+    "zhipu": {
+        "base_url": os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"),
+        "model": "GLM-4.7",
+        "api_key_env": "ZHIPU_API_KEY"
+    },
+    "moonshot": {
+        "base_url": os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1"),
+        "model": "kimi-k2.6",
+        "api_key_env": "MOONSHOT_API_KEY"
+    },
+    "deepseek-v4-pro": {
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        "model": "deepseek-v4-pro",
+        "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    "deepseek-v4-flash": {
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        "model": "deepseek-v4-flash",
+        "api_key_env": "DEEPSEEK_API_KEY"
+    }
+}
+
 # Tensorization strategies to inject for each branch
 STRATEGIES_SHORT = [
     "BROADCASTING (No Loops)",
@@ -40,7 +74,7 @@ IGNORE_RUFF_CODES = [
 ]
 
 # --- Cleanup Settings ---
-MAX_RETAINED_WORKSPACES = 150
+MAX_RETAINED_WORKSPACES = 1000
 
 # --- Path Configurations ---
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
