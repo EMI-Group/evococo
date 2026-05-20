@@ -3,6 +3,10 @@ Global Configuration for EvoCoder
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load environment variables FIRST before setting config defaults
+load_dotenv()
 
 # --- Tournament Engine Settings ---
 NUM_BRANCHES = 6
