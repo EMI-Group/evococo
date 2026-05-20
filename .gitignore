@@ -218,3 +218,6 @@ experiments/benchmark_results_untested
 experiments/formal_experiment_results/
 experiments/formal_matlab_algorithms/
 experiments/repeat1_algorithms_archive/
+experiments/Untested_Medium_Algorithms/
+experiments/Untested_Medium_Algorithms_results/
+
