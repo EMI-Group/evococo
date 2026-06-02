@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EvoAda v3.0 | Tournament Engine</title>
+    <title>EvoCoCo v3.0 | Tournament Engine</title>
     <!-- Tailwind CSS with Typography plugin -->
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <!-- Markdown Parser -->
@@ -327,7 +327,7 @@
             </div>
             <div>
                 <h1 class="font-black text-2xl tracking-tight text-slate-800 dark:text-white uppercase leading-none">
-                    EvoAda <span
+                    EvoCoCo <span
                         class="text-indigo-600 dark:text-indigo-400 text-xs font-mono px-2 py-0.5 bg-indigo-500/10 border border-indigo-500/20 rounded-lg ml-1">3.0</span>
                 </h1>
                 <p class="text-[10px] uppercase tracking-[0.4em] font-black text-slate-400 dark:text-slate-500 mt-1">
@@ -703,7 +703,7 @@ end`;
                 let colorClass = 'text-slate-500';
                 const lowerMsg = message.toLowerCase();
                 if (title === 'PERF') colorClass = 'text-primary-500 font-black';
-                else if (lowerMsg.includes('failed') || lowerMsg.includes('error')) colorClass = 'text-rose-500 font-black';
+                else if (title === 'ERR' || title === 'FATAL' || title === 'FAIL' || lowerMsg.includes('failed') || lowerMsg.includes('error')) colorClass = 'text-rose-500 font-black';
                 else if (lowerMsg.includes('success') || lowerMsg.includes('passed') || lowerMsg.includes('done')) colorClass = 'text-emerald-500 font-black uppercase tracking-tight';
                 else if (lowerMsg.includes('warning')) colorClass = 'text-amber-500 font-bold';
                 else if (lowerMsg.includes('pipeline') || lowerMsg.includes('system')) colorClass = 'text-indigo-600 dark:text-indigo-400 font-bold';

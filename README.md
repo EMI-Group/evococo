@@ -1,6 +1,6 @@
-# EvoCoder
+# EvoCoCo
 
-EvoCoder is a lightweight local application with a **FastAPI backend** and a **browser-based frontend**.
+EvoCoCo is a lightweight local application with a **FastAPI backend** and a **browser-based frontend**.
 The backend provides API services, while the frontend interacts with it through a simple web interface.
 
 ## Configuration
