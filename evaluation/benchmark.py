@@ -90,79 +90,88 @@ async def main():
     print(f"{'File':<30} | {'Syntax':<6} | {'Static':<6} | {'Exec':<6} | {'Optim':<6} | {'IGD':<8} | {'Time(s)'}")
     print("-" * 90)
 
-    for py_file in py_files:
+    sem = asyncio.Semaphore(8)
+    write_lock = asyncio.Lock()
+
+    async def evaluate_single_file(py_file):
         if py_file in processed_files:
-            continue
+            return
             
-        path = os.path.join(args.dir, py_file)
-        with open(path, "r", encoding="utf-8") as f:
-            code = f.read()
+        async with sem:
+            path = os.path.join(args.dir, py_file)
+            with open(path, "r", encoding="utf-8") as f:
+                code = f.read()
 
-        # Metric 1: Syntax
-        syntax_pass = test_syntax(code)
-        
-        # Metric 2: Static
-        static_pass = False
-        if syntax_pass:
-            static_pass, _ = await check_syntax_with_ruff(code, session_id=f"bench_{uuid.uuid4().hex[:6]}")
-
-        # Metric 3 & 4: Execution & Optimization
-        exec_pass = False
-        optim_pass = False
-        final_igd = float("inf")
-        exec_time = -1.0
-
-        if syntax_pass:
-            modified_code = code
-            if "if __name__ ==" not in code.replace(' ', ''):
-                # Need to inject harness
-                m = re.search(r"class\s+([A-Za-z0-9_]+)\s*\(", code)
-                if m:
-                    class_name = m.group(1)
-                    modified_code += BOILERPLATE.replace("{CLASS_NAME}", class_name)
-                
-            report = await execute_code_trial(modified_code, session_id=f"run_{uuid.uuid4().hex[:6]}", filename=py_file)
+            # Metric 1: Syntax
+            syntax_pass = test_syntax(code)
             
-            exec_pass = report.get("success", False)
-            final_igd = report.get("last_igd", float("inf"))
-            
-            # Extract execution time independently without modifying executor.py
+            # Metric 2: Static
+            static_pass = False
+            if syntax_pass:
+                static_pass, _ = await check_syntax_with_ruff(code, session_id=f"bench_{uuid.uuid4().hex[:6]}")
+
+            # Metric 3 & 4: Execution & Optimization
+            exec_pass = False
+            optim_pass = False
+            final_igd = float("inf")
             exec_time = -1.0
-            stdout_str = report.get("stdout", "")
-            t_match = re.search(r"Execution time.*?:\s*([0-9]*[.]?[0-9]+)s", stdout_str, re.IGNORECASE)
-            if t_match:
-                try:
-                    exec_time = float(t_match.group(1))
-                except ValueError:
-                    pass
-            
-            # Override with absolute IGD threshold (< 0.25) for convergence on DTLZ2
-            igds = report.get("igd_history", [])
-            optim_pass = len(igds) >= 2 and igds[-1] < 0.25
-            
-            if exec_pass and report.get("has_nan", False):
-                exec_pass = False # Marked failure if NaNs heavily persist
+
+            if syntax_pass:
+                # Prepend global torch.compile bypass and set threads to 1 to avoid JIT compilation overhead, hangs, and CPU thrashing
+                modified_code = "import torch\ntorch.set_num_threads(1)\ntorch.compile = lambda fn, *args, **kwargs: fn\n" + code
+                if "if __name__ ==" not in code.replace(' ', ''):
+                    # Need to inject harness
+                    m = re.search(r"class\s+([A-Za-z0-9_]+)\s*\(", code)
+                    if m:
+                        class_name = m.group(1)
+                        modified_code += BOILERPLATE.replace("{CLASS_NAME}", class_name)
+                    
+                report = await execute_code_trial(modified_code, session_id=f"run_{uuid.uuid4().hex[:6]}", filename=py_file)
                 
-            # If it successfully converged, it executed properly
-            if optim_pass and final_igd != float("inf"):
-                exec_pass = True
+                exec_pass = report.get("success", False)
+                final_igd = report.get("last_igd", float("inf"))
+                
+                # Extract execution time independently without modifying executor.py
+                exec_time = -1.0
+                stdout_str = report.get("stdout", "")
+                t_match = re.search(r"Execution time.*?:\s*([0-9]*[.]?[0-9]+)s", stdout_str, re.IGNORECASE)
+                if t_match:
+                    try:
+                        exec_time = float(t_match.group(1))
+                    except ValueError:
+                        pass
+                
+                # Override with absolute IGD threshold (< 0.25) for convergence on DTLZ2
+                igds = report.get("igd_history", [])
+                optim_pass = len(igds) >= 2 and igds[-1] < 0.25
+                
+                if exec_pass and report.get("has_nan", False):
+                    exec_pass = False # Marked failure if NaNs heavily persist
+                    
+                # If it successfully converged, it executed properly
+                if optim_pass and final_igd != float("inf"):
+                    exec_pass = True
 
-        results.append({
-            "file": py_file,
-            "syntax": syntax_pass,
-            "static": static_pass,
-            "exec": exec_pass,
-            "optim": optim_pass,
-            "final_igd": final_igd,
-            "exec_time": exec_time
-        })
+            async with write_lock:
+                results.append({
+                    "file": py_file,
+                    "syntax": syntax_pass,
+                    "static": static_pass,
+                    "exec": exec_pass,
+                    "optim": optim_pass,
+                    "final_igd": final_igd,
+                    "exec_time": exec_time
+                })
 
-        igd_str = f"{final_igd:.4f}" if final_igd != float("inf") else "inf"
-        time_str = f"{exec_time:.2f}" if exec_time >= 0 else "N/A"
-        print(f"{py_file[:28]:<30} | {str(syntax_pass):<6} | {str(static_pass):<6} | {str(exec_pass):<6} | {str(optim_pass):<6} | {igd_str:<8} | {time_str}")
-        
-        with open(report_file, "w", encoding="utf-8") as f:
-            json.dump(results, f, indent=2)
+                igd_str = f"{final_igd:.4f}" if final_igd != float("inf") else "inf"
+                time_str = f"{exec_time:.2f}" if exec_time >= 0 else "N/A"
+                print(f"{py_file[:28]:<30} | {str(syntax_pass):<6} | {str(static_pass):<6} | {str(exec_pass):<6} | {str(optim_pass):<6} | {igd_str:<8} | {time_str}")
+                
+                with open(report_file, "w", encoding="utf-8") as f:
+                    json.dump(results, f, indent=2)
+
+    tasks = [evaluate_single_file(f) for f in py_files]
+    await asyncio.gather(*tasks)
 
     print("=" * 90)
     print(f"Summary JSON saved to {report_file}")

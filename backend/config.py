@@ -3,6 +3,10 @@ Global Configuration for EvoCoder
 """
 
 import os
+from dotenv import load_dotenv
+
+# Load environment variables FIRST before setting config defaults
+load_dotenv()
 
 # --- Tournament Engine Settings ---
 NUM_BRANCHES = 6
@@ -21,7 +25,7 @@ LLM_PROVIDERS = {
     },
     "zhipu": {
         "base_url": os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"),
-        "model": "GLM-4.7",
+        "model": "GLM-5.1",
         "api_key_env": "ZHIPU_API_KEY"
     },
     "moonshot": {

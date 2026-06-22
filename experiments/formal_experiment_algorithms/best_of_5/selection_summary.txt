@@ -17,12 +17,10 @@ NSBiDiCo        | Chosen: NSBiDiCo_run3.py     | IGD: 0.0661 | Time: 0.87s
 VaEA            | Chosen: VaEA_run5.py         | IGD: 0.0550 | Time: 3.32s
 SIBEA           | Chosen: SIBEA_run2.py        | IGD: 0.0700 | Time: 1.45s
 GDE3            | Chosen: GDE3_run1.py         | IGD: 0.0750 | Time: 1.70s
-r-NSGA-II       | Chosen: r-NSGA-II_run4.py    | IGD: 0.2165 | Time: 10.27s
 SMPSO           | Chosen: SMPSO_run3.py        | IGD: 0.0913 | Time: 5.06s
 DM-MOEA         | Chosen: DM-MOEA_run4.py      | IGD: 0.0713 | Time: 0.82s
 MTEA-D-DN       | Chosen: MTEA-D-DN_run3.py    | IGD: 0.1078 | Time: 0.66s
 MOEA-D-VOV      | Chosen: MOEA-D-VOV_run3.py   | IGD: 0.0632 | Time: 1.12s
-MOEA-D-M2M      | Chosen: MOEA-D-M2M_run5.py   | IGD: 0.0976 | Time: 1.26s
 SparseEA2       | Chosen: SparseEA2_run2.py    | IGD: 0.0649 | Time: 1.31s
 tDEA-CPBI       | Chosen: tDEA-CPBI_run1.py    | IGD: 0.0572 | Time: 0.16s
 MOEA-D-DE       | Chosen: MOEA-D-DE_run2.py    | IGD: 0.0805 | Time: 0.21s
@@ -39,7 +37,7 @@ t-DEA           | Chosen: t-DEA_run1.py        | IGD: 0.0551 | Time: 0.10s
 WASF-GA         | Chosen: WASF-GA_run5.py      | IGD: 0.0702 | Time: 0.25s
 CLIA            | Chosen: CLIA_run5.py         | IGD: 0.0696 | Time: 2.10s
 MOEA-D-DU       | Chosen: MOEA-D-DU_run3.py    | IGD: 0.0598 | Time: 0.25s
-MOEA-D-MRDL     | Chosen: MOEA-D-MRDL_run5.py  | IGD: 0.0887 | Time: 1.07s
+r-NSGA-II       | Chosen: r-NSGA-II_run4.py    | IGD: 0.2165 | Time: 10.27s
 EFR-RR          | Chosen: EFR-RR_run2.py       | IGD: 0.0558 | Time: 0.15s
 PREA            | Chosen: PREA_run3.py         | IGD: 0.0585 | Time: 3.84s
 GrEA            | Chosen: GrEA_run4.py         | IGD: 0.0977 | Time: 2.81s
