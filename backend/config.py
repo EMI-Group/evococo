@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Tournament Engine Settings ---
-NUM_BRANCHES = 6
+NUM_BRANCHES = int(os.getenv("NUM_BRANCHES", 6))
+CONCURRENT_LLM_LIMIT = int(os.getenv("CONCURRENT_LLM_LIMIT", 2))
 
 # --- LLM Generation Settings ---
 # Reasoning effort for supported models (e.g., o1/o3-mini).

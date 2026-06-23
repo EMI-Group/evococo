@@ -1,11 +1,13 @@
 import os
 import json
 import re
+import asyncio
+import time
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from .config import REASONING_EFFORT, LLM_PROVIDERS
+from .config import REASONING_EFFORT, LLM_PROVIDERS, CONCURRENT_LLM_LIMIT
 
 # 1. Load environment variables
 load_dotenv()
@@ -26,11 +28,39 @@ TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
 client = AsyncOpenAI(
     api_key=API_KEY, 
     base_url=BASE_URL,
-    timeout=120.0,
+    timeout=300.0,
     max_retries=3
 )
 
+# Concurrency Semaphore for rate-limiting
+_sem = None
+
+def _get_semaphore():
+    global _sem
+    if _sem is None:
+        _sem = asyncio.Semaphore(CONCURRENT_LLM_LIMIT)
+    return _sem
+
+# LLM Run Statistics
+_run_stats = {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "duration": 0.0
+}
+
+def reset_llm_stats():
+    global _run_stats
+    _run_stats = {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "duration": 0.0
+    }
+
+def get_llm_stats():
+    return _run_stats
+
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+
 
 
 def _load_prompt(filename, **kwargs):
@@ -78,14 +108,27 @@ async def generate_llm_response(
             # We enforce JSON object returned to assist Pydantic structure mapping
             kwargs_api["response_format"] = {"type": "json_object"}
 
-        response = await client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[{"role": "user", "content": prompt_content}],
-            temperature=TEMPERATURE,
-            stream=False,
-            extra_body={"reasoning_effort": REASONING_EFFORT},
-            **kwargs_api,
-        )
+        async with _get_semaphore():
+            start_time = time.perf_counter()
+            response = await client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[{"role": "user", "content": prompt_content}],
+                temperature=TEMPERATURE,
+                stream=False,
+                extra_body={"reasoning_effort": REASONING_EFFORT},
+                **kwargs_api,
+            )
+            duration = time.perf_counter() - start_time
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens if usage else 0
+        completion_tokens = usage.completion_tokens if usage else 0
+        print(f">排队过滤后 [LLM Usage] Prompt: {prompt_filename} | Time: {duration:.2f}s | Prompt Tokens: {prompt_tokens} | Completion Tokens: {completion_tokens} | Total: {prompt_tokens + completion_tokens}")
+
+        global _run_stats
+        _run_stats["prompt_tokens"] += prompt_tokens
+        _run_stats["completion_tokens"] += completion_tokens
+        _run_stats["duration"] += duration
+
 
         # C. Clean Response
         content = response.choices[0].message.content

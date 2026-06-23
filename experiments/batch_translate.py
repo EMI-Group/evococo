@@ -2,11 +2,13 @@ import os
 import sys
 import asyncio
 import argparse
+import json
 
 # Add parent directory to path to allow importing backend
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backend.engine import run_pipeline
+from backend.generator import reset_llm_stats, get_llm_stats
 
 async def process_file(file_path, num_repeats, output_dir=None):
     matlab_code = ""
@@ -51,6 +53,7 @@ async def process_file(file_path, num_repeats, output_dir=None):
                 final_code_captured.append(message)
                 
         try:
+            reset_llm_stats()
             await run_pipeline(matlab_code, custom_callback)
             print(f"--- Run {run_idx} completed ---")
             
@@ -60,6 +63,20 @@ async def process_file(file_path, num_repeats, output_dir=None):
                 with open(out_file, 'w', encoding='utf-8') as f:
                     f.write(final_code_captured[0])
                 print(f"Saved result to {out_file}")
+                
+                # Save statistics
+                stats = get_llm_stats()
+                stats_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}_stats.json")
+                with open(stats_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        "algorithm": algo_name,
+                        "run": run_idx,
+                        "total_llm_time_seconds": round(stats["duration"], 2),
+                        "prompt_tokens": stats["prompt_tokens"],
+                        "completion_tokens": stats["completion_tokens"],
+                        "total_tokens": stats["prompt_tokens"] + stats["completion_tokens"]
+                    }, f, indent=2)
+                print(f"Saved stats to {stats_file}")
                 
         except Exception as e:
             print(f"--- Run {run_idx} failed with exception: {e} ---")
