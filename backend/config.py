@@ -3,10 +3,22 @@ Global Configuration for EvoCoder
 """
 
 import os
+import shutil
 from dotenv import load_dotenv
 
+# --- Path Configurations (Pre-defined for env loading) ---
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
+ENV_EXAMPLE_PATH = os.path.join(PROJECT_ROOT, ".env.example")
+
+# Auto-copy .env.example if .env doesn't exist
+if not os.path.exists(ENV_PATH) and os.path.exists(ENV_EXAMPLE_PATH):
+    shutil.copy(ENV_EXAMPLE_PATH, ENV_PATH)
+    print(f"\n⚠️ Created {ENV_PATH} from template. Please update your API keys in it.\n")
+
 # Load environment variables FIRST before setting config defaults
-load_dotenv()
+load_dotenv(ENV_PATH)
 
 # --- Tournament Engine Settings ---
 NUM_BRANCHES = 6
@@ -16,35 +28,28 @@ NUM_BRANCHES = 6
 # Standard Options: "low", "medium", "high"
 # Special Option: "minimal" (Exclusive to Gemini 3 Flash models via LiteLLM for absolute minimum thinking)
 REASONING_EFFORT = "minimal"
-
 LLM_PROVIDERS = {
-    "litellm": {
-        "base_url": os.getenv("LITELLM_BASE_URL", "http://localhost:4000"),
-        "model": "gemini/gemini-3-flash-preview",
-        "api_key_env": "LITELLM_API_KEY"
-    },
     "zhipu": {
         "base_url": os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"),
-        "model": "GLM-5.1",
+        "model": os.getenv("ZHIPU_MODEL", "GLM-5.1"),
         "api_key_env": "ZHIPU_API_KEY"
-    },
-    "moonshot": {
-        "base_url": os.getenv("MOONSHOT_BASE_URL", "https://api.moonshot.cn/v1"),
-        "model": "kimi-k2.6",
-        "api_key_env": "MOONSHOT_API_KEY"
     },
     "deepseek-v4-pro": {
         "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        "model": "deepseek-v4-pro",
+        "model": os.getenv("DEEPSEEK_MODEL_PRO", "deepseek-v4-pro"),
         "api_key_env": "DEEPSEEK_API_KEY"
     },
-    "deepseek-v4-flash": {
-        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        "model": "deepseek-v4-flash",
-        "api_key_env": "DEEPSEEK_API_KEY"
+    "gemini": {
+        "base_url": os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"),
+        "model": os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
+        "api_key_env": "GEMINI_API_KEY"
+    },
+    "custom": {
+        "base_url": os.getenv("CUSTOM_BASE_URL", "http://localhost:4000/v1"),
+        "model": os.getenv("CUSTOM_MODEL", "custom-model"),
+        "api_key_env": "CUSTOM_API_KEY"
     }
 }
-
 # Tensorization strategies to inject for each branch
 STRATEGIES_SHORT = [
     "BROADCASTING (No Loops)",
@@ -81,8 +86,6 @@ IGNORE_RUFF_CODES = [
 MAX_RETAINED_WORKSPACES = 1000
 
 # --- Path Configurations ---
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
 BASE_WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "temp_workspace")
 HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
 PROMPTS_DIR = os.path.join(BACKEND_DIR, "prompts")
