@@ -225,5 +225,7 @@ experiments/ablation_subset_package
 experiments/ablation_subset_results
 experiments/all_matlab_algorithms/
 experiments/baseline*
+experiments/ablation_subset_results_glm51
+experiments/evococo-48
 
 

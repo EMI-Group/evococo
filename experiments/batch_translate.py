@@ -60,21 +60,29 @@ async def process_file(file_path, num_repeats, output_dir=None):
             if final_code_captured and output_dir:
                 os.makedirs(output_dir, exist_ok=True)
                 out_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}.py")
-                with open(out_file, 'w', encoding='utf-8') as f:
-                    f.write(final_code_captured[0])
-                print(f"Saved result to {out_file}")
                 
                 # Save statistics
                 stats = get_llm_stats()
+                duration_rounded = round(stats["duration"], 2)
+                total_tokens = stats["prompt_tokens"] + stats["completion_tokens"]
+                
+                # Append stats as comments to the final code
+                final_code = final_code_captured[0]
+                final_code += f"\n\n# LLM Statistics:\n# Time: {duration_rounded}s\n# Prompt Tokens: {stats['prompt_tokens']}\n# Completion Tokens: {stats['completion_tokens']}\n# Total Tokens: {total_tokens}\n"
+                
+                with open(out_file, 'w', encoding='utf-8') as f:
+                    f.write(final_code)
+                print(f"Saved result to {out_file}")
+                
                 stats_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}_stats.json")
                 with open(stats_file, 'w', encoding='utf-8') as f:
                     json.dump({
                         "algorithm": algo_name,
                         "run": run_idx,
-                        "total_llm_time_seconds": round(stats["duration"], 2),
+                        "total_llm_time_seconds": duration_rounded,
                         "prompt_tokens": stats["prompt_tokens"],
                         "completion_tokens": stats["completion_tokens"],
-                        "total_tokens": stats["prompt_tokens"] + stats["completion_tokens"]
+                        "total_tokens": total_tokens
                     }, f, indent=2)
                 print(f"Saved stats to {stats_file}")
                 

@@ -82,8 +82,14 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(code)
 
+        ruff_path = "ruff"
+        interpreter_dir = os.path.dirname(sys.executable)
+        candidate = os.path.join(interpreter_dir, "ruff")
+        if os.path.exists(candidate):
+            ruff_path = candidate
+
         cmd = [
-            "ruff",
+            ruff_path,
             "check",
             file_path,
             "--select",

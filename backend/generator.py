@@ -28,7 +28,7 @@ TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
 client = AsyncOpenAI(
     api_key=API_KEY, 
     base_url=BASE_URL,
-    timeout=300.0,
+    timeout=1800.0,
     max_retries=3
 )
 
