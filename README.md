@@ -9,20 +9,23 @@ Before running the application, you need to configure your LLM providers. Create
 
 ```env
 # --- LLM Provider Selection ---
-# Switch this to 'litellm', 'zhipu', 'moonshot', 'deepseek-v4-pro', or 'deepseek-v4-flash'
+# Switch this to 'zhipu', 'deepseek-v4-pro', 'gemini', or 'custom'
 ACTIVE_LLM_PROVIDER=zhipu
 
 # --- Global LLM Settings ---
 OPENAI_TEMPERATURE=0.2
 
 # --- API Keys ---
-LITELLM_API_KEY=your_litellm_api_key_here
 ZHIPU_API_KEY=your_zhipu_api_key_here
-MOONSHOT_API_KEY=your_moonshot_api_key_here
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+CUSTOM_API_KEY=your_custom_api_key_here
 ```
 
 To switch models, simply change the `ACTIVE_LLM_PROVIDER` value.
+
+> [!TIP]
+> It is highly recommended to use the `gemini-3-flash-preview` model under the `gemini` provider (set `ACTIVE_LLM_PROVIDER=gemini` in `.env`). This model performs exceptionally well in code translation and generation tasks while offering outstanding cost efficiency.
 
 ## Running the Backend
 
