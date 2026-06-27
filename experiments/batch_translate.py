@@ -51,15 +51,24 @@ async def process_file(file_path, num_repeats, output_dir=None):
                 final_code_captured.append(message)
                 
         try:
-            await run_pipeline(matlab_code, custom_callback)
+            stats_data = await run_pipeline(matlab_code, custom_callback)
             print(f"--- Run {run_idx} completed ---")
             
-            if final_code_captured and output_dir:
+            if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
-                out_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}.py")
-                with open(out_file, 'w', encoding='utf-8') as f:
-                    f.write(final_code_captured[0])
-                print(f"Saved result to {out_file}")
+                
+                if final_code_captured:
+                    out_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}.py")
+                    with open(out_file, 'w', encoding='utf-8') as f:
+                        f.write(final_code_captured[0])
+                    print(f"Saved result to {out_file}")
+                    
+                if stats_data:
+                    stats_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}_stats.json")
+                    import json
+                    with open(stats_file, 'w', encoding='utf-8') as f:
+                        json.dump(stats_data, f, indent=2, ensure_ascii=False)
+                    print(f"Saved stats JSON to {stats_file}")
                 
         except Exception as e:
             print(f"--- Run {run_idx} failed with exception: {e} ---")

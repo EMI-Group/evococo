@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -56,7 +57,7 @@ def _load_prompt(filename, **kwargs):
 
 
 async def generate_llm_response(
-    prompt_filename: str, response_model: type[BaseModel] = None, **kwargs
+    prompt_filename: str, response_model: type[BaseModel] = None, metrics_out: dict = None, **kwargs
 ):
     """
     Generates text response via the OpenAI-compatible API.
@@ -64,6 +65,7 @@ async def generate_llm_response(
     Args:
         prompt_filename (str): Filename in the prompts/ directory (e.g., "1_analyst.md")
         response_model (type[BaseModel], optional): Pydantic model to enforce and parse structured output.
+        metrics_out (dict, optional): Dict to record token usage and latency metrics.
         **kwargs: Variables to inject into the prompt (e.g., matlab_code, analyst_report)
     """
     try:
@@ -78,6 +80,7 @@ async def generate_llm_response(
             # We enforce JSON object returned to assist Pydantic structure mapping
             kwargs_api["response_format"] = {"type": "json_object"}
 
+        start_time = time.perf_counter()
         response = await client.chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt_content}],
@@ -86,6 +89,15 @@ async def generate_llm_response(
             extra_body={"reasoning_effort": REASONING_EFFORT},
             **kwargs_api,
         )
+        latency = time.perf_counter() - start_time
+
+        # Extract usage metrics
+        usage = getattr(response, "usage", None)
+        if metrics_out is not None:
+            metrics_out["prompt_tokens"] = getattr(usage, "prompt_tokens", 0) if usage else 0
+            metrics_out["completion_tokens"] = getattr(usage, "completion_tokens", 0) if usage else 0
+            metrics_out["total_tokens"] = getattr(usage, "total_tokens", 0) if usage else 0
+            metrics_out["latency"] = latency
 
         # C. Clean Response
         content = response.choices[0].message.content

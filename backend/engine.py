@@ -172,11 +172,17 @@ async def run_single_branch_lifecycle(
     )
 
     current_code = ""
+    branch_metrics = {
+        "coder": {},
+        "static_fixes": [],
+        "runtime_fixes": []
+    }
 
     try:
         # =================================================
         # STEP 4: CODER
         # =================================================
+        coder_metrics = {}
         current_code = await generate_llm_response(
             "4_coder.md",
             constraints=enhanced_constraints,
@@ -184,7 +190,9 @@ async def run_single_branch_lifecycle(
             asset_library=asset_lib_content,
             few_shot_examples=few_shot_content,
             temperature=current_temp,
+            metrics_out=coder_metrics
         )
+        branch_metrics["coder"] = coder_metrics
         current_code = current_code.replace("```python", "").replace("```", "").strip()
 
         if run_dir:
@@ -212,9 +220,12 @@ async def run_single_branch_lifecycle(
             )
 
             if i < MAX_STATIC_RETRIES:
+                static_metrics = {}
                 current_code = await generate_llm_response(
-                    "5_static_fixer.md", error_log=error_msg, previous_code=current_code
+                    "5_static_fixer.md", error_log=error_msg, previous_code=current_code,
+                    metrics_out=static_metrics
                 )
+                branch_metrics["static_fixes"].append(static_metrics)
                 current_code = (
                     current_code.replace("```python", "").replace("```", "").strip()
                 )
@@ -270,6 +281,7 @@ async def run_single_branch_lifecycle(
                         "igd_history": best_history,
                         "exec_time": report.get("exec_time", -1.0),
                         "branch_idx": branch_idx,
+                        "metrics": branch_metrics,
                     }
                 else:
                     await status_callback("log", "ERR", f"[{L_TAG}] NaN Detected.")
@@ -285,6 +297,7 @@ async def run_single_branch_lifecycle(
                 short_err = err_summary.split("\n")[-1][:60]
                 await status_callback("log", "ERR", f"[{L_TAG}] Fix... ({short_err})")
 
+                runtime_metrics = {}
                 current_code = await generate_llm_response(
                     "6_runtime_fixer.md",
                     constraints=constraints_str,
@@ -292,7 +305,9 @@ async def run_single_branch_lifecycle(
                     error_summary=err_summary,
                     previous_code=current_code,
                     matlab_code=matlab_code,
+                    metrics_out=runtime_metrics
                 )
+                branch_metrics["runtime_fixes"].append(runtime_metrics)
                 current_code = (
                     current_code.replace("```python", "").replace("```", "").strip()
                 )
@@ -309,6 +324,7 @@ async def run_single_branch_lifecycle(
             "igd_history": [],
             "exec_time": -1.0,
             "branch_idx": branch_idx,
+            "metrics": branch_metrics,
         }
 
     except Exception as e:
@@ -322,6 +338,7 @@ async def run_single_branch_lifecycle(
             "igd_history": [],
             "exec_time": -1.0,
             "branch_idx": branch_idx,
+            "metrics": branch_metrics,
         }
 
 
@@ -335,9 +352,16 @@ async def run_pipeline(matlab_code: str, status_callback):
     asset_lib_content = load_resource("resources_assets.md")
     few_shot_content = load_resource("resources_examples.md")
 
-    # [New] Load PlatEMO reference background document
-    # This corresponds to the reference_platemo.md we just created
-    reference_content = load_resource("reference_platemo.md")
+    # Detect if the input MATLAB code is a PlatEMO classdef algorithm
+    is_platemo = bool(re.search(r"classdef\s+[A-Za-z0-9_]+\s*<\s*ALGORITHM", matlab_code))
+
+    if is_platemo:
+        print(">>> [INFO] Detected PlatEMO algorithm standard.")
+        reference_content = load_resource("reference_platemo.md")
+    else:
+        print(">>> [INFO] Detected custom/standalone MATLAB algorithm standard.")
+        reference_content = load_resource("reference_custom.md")
+
 
     # Extract algorithm name from matlab_code
     algo_name = "UnknownAlgo"
@@ -349,6 +373,14 @@ async def run_pipeline(matlab_code: str, status_callback):
         if m_func:
             algo_name = m_func.group(1)
 
+    perf_stats = {
+        "algorithm": algo_name,
+        "session_id": "UnknownSession",
+        "total_tokens": {"prompt": 0, "completion": 0, "total": 0},
+        "total_llm_time": 0.0,
+        "stages": {}
+    }
+
     # 1. Initialization
     try:
         run_dir = ensure_history_dir(algo_name)
@@ -359,12 +391,43 @@ async def run_pipeline(matlab_code: str, status_callback):
         run_dir = None
 
     session_id = os.path.basename(run_dir) if run_dir else f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{algo_name}"
+    perf_stats["session_id"] = session_id
+
+    def save_perf_stats():
+        if not run_dir:
+            return
+        perf_stats["total_tokens"] = {"prompt": 0, "completion": 0, "total": 0}
+        perf_stats["total_llm_time"] = 0.0
+
+        def add_metrics(m):
+            if m:
+                perf_stats["total_tokens"]["prompt"] += m.get("prompt_tokens", 0)
+                perf_stats["total_tokens"]["completion"] += m.get("completion_tokens", 0)
+                perf_stats["total_tokens"]["total"] += m.get("total_tokens", 0)
+                perf_stats["total_llm_time"] += m.get("latency", 0.0)
+
+        add_metrics(perf_stats["stages"].get("analyst"))
+        add_metrics(perf_stats["stages"].get("rag"))
+        add_metrics(perf_stats["stages"].get("architect"))
+        add_metrics(perf_stats["stages"].get("judge"))
+
+        for b in perf_stats["stages"].get("branches", []):
+            b_m = b.get("metrics", {})
+            add_metrics(b_m.get("coder"))
+            for s_fix in b_m.get("static_fixes", []):
+                add_metrics(s_fix)
+            for r_fix in b_m.get("runtime_fixes", []):
+                add_metrics(r_fix)
+
+        save_artifact(run_dir, "performance_stats.json", perf_stats)
 
     if run_dir:
         save_artifact(run_dir, "0_input.m", matlab_code)
 
     await status_callback("init", "Pipeline Initialized", f"Session: {session_id}")
     await status_callback("log", "SYS", f"Session created at {session_id}")
+    await status_callback("log", "SYS", f"Detected algorithm style: {'PlatEMO' if is_platemo else 'Custom/Standalone'}")
+
 
     try:
         # Step 1: Analyst
@@ -372,13 +435,16 @@ async def run_pipeline(matlab_code: str, status_callback):
             "step_start", "Step 1: Analyst", "Analyzing Logic...", step_id="analyst"
         )
 
+        analyst_metrics = {}
         # [Modify] Inject reference_context into LLM request
         ir_md = await generate_llm_response(
             "1_analyst.md",
             matlab_code=matlab_code,
             global_spec=global_spec_content,
             reference_context=reference_content,  # <--- Here is the injection point
+            metrics_out=analyst_metrics,
         )
+        perf_stats["stages"]["analyst"] = analyst_metrics
 
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
@@ -407,12 +473,15 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         all_rules_desc = "\n---\n".join(rules_context_list)
 
+        rag_metrics = {}
         rag_result = await generate_llm_response(
             "2_rag_selector.md",
             response_model=RagResult,
             rules_context=all_rules_desc,
             analyst_report=ir_md,
+            metrics_out=rag_metrics,
         )
+        perf_stats["stages"]["rag"] = rag_metrics
         selected_bug_numbers = rag_result.selected_bug_numbers
 
         # ... (Rule matching logic) ...
@@ -466,9 +535,12 @@ async def run_pipeline(matlab_code: str, status_callback):
             "Designing Blueprint...",
             step_id="architect",
         )
+        architect_metrics = {}
         blueprint_md = await generate_llm_response(
-            "3_architect.md", rag_rules=matched_rules_text, analyst_report=ir_md
+            "3_architect.md", rag_rules=matched_rules_text, analyst_report=ir_md,
+            metrics_out=architect_metrics,
         )
+        perf_stats["stages"]["architect"] = architect_metrics
         if run_dir:
             save_artifact(run_dir, "3_blueprint.md", blueprint_md)
         await status_callback("result_blueprint", "", blueprint_md)
@@ -509,6 +581,17 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
 
         results = await asyncio.gather(*tasks)
+
+        perf_stats["stages"]["branches"] = []
+        for res in results:
+            b_metrics = res.get("metrics", {})
+            perf_stats["stages"]["branches"].append({
+                "branch_idx": res["branch_idx"],
+                "strategy": STRATEGIES_SHORT[res["branch_idx"] % len(STRATEGIES_SHORT)],
+                "success": res["success"],
+                "igd": res["igd"],
+                "metrics": b_metrics
+            })
 
         # Step 7: Selector
         await status_callback(
@@ -556,12 +639,15 @@ async def run_pipeline(matlab_code: str, status_callback):
             )
         else:
             try:
+                judge_metrics = {}
                 # 3. Send request strictly expecting JudgeResult JSON
                 judge_result = await generate_llm_response(
                     "7_selector.md",
                     response_model=JudgeResult,
                     candidates_list=candidates_json,
+                    metrics_out=judge_metrics,
                 )
+                perf_stats["stages"]["judge"] = judge_metrics
 
                 if run_dir:
                     save_artifact(
@@ -616,9 +702,103 @@ async def run_pipeline(matlab_code: str, status_callback):
                     is_success=True,
                 )
 
+        # Save performance statistics and log summary
+        try:
+            save_perf_stats()
+            total_p = perf_stats["total_tokens"]["prompt"]
+            total_c = perf_stats["total_tokens"]["completion"]
+            total_t = perf_stats["total_tokens"]["total"]
+            total_time = perf_stats["total_llm_time"]
+            await status_callback(
+                "log",
+                "STATS",
+                f"Total LLM Time: {total_time:.2f}s | Total Tokens: {total_t:,} (Prompt: {total_p:,}, Completion: {total_c:,})"
+            )
+        except Exception as stats_err:
+            print(f">>> [WARNING] Failed to log/save performance stats: {stats_err}")
+
+        # Construct and prepend performance stats header comment block
+        stats_header = (
+            "# ==============================================================================\n"
+            f"# EvoCoder Performance Statistics\n"
+            f"# Total LLM Time: {perf_stats['total_llm_time']:.2f}s\n"
+            f"# Total Tokens: {perf_stats['total_tokens']['total']:,} "
+            f"(Prompt: {perf_stats['total_tokens']['prompt']:,}, Completion: {perf_stats['total_tokens']['completion']:,})\n"
+            "#\n"
+            "# Operators & Stages Status:\n"
+        )
+        if "analyst" in perf_stats["stages"]:
+            a = perf_stats["stages"]["analyst"]
+            stats_header += f"#   - Analyst: SUCCESS | Latency: {a.get('latency', 0.0):.2f}s | Tokens: {a.get('total_tokens', 0):,} (Prompt: {a.get('prompt_tokens', 0):,}, Completion: {a.get('completion_tokens', 0):,})\n"
+        if "rag" in perf_stats["stages"]:
+            r = perf_stats["stages"]["rag"]
+            stats_header += f"#   - RAG: SUCCESS | Latency: {r.get('latency', 0.0):.2f}s | Tokens: {r.get('total_tokens', 0):,} (Prompt: {r.get('prompt_tokens', 0):,}, Completion: {r.get('completion_tokens', 0):,})\n"
+        if "architect" in perf_stats["stages"]:
+            arc = perf_stats["stages"]["architect"]
+            stats_header += f"#   - Architect: SUCCESS | Latency: {arc.get('latency', 0.0):.2f}s | Tokens: {arc.get('total_tokens', 0):,} (Prompt: {arc.get('prompt_tokens', 0):,}, Completion: {arc.get('completion_tokens', 0):,})\n"
+
+        if "branches" in perf_stats["stages"] or "branches" in perf_stats.get("stages", {}):
+            for b in perf_stats["stages"].get("branches", []):
+                b_idx = b.get("branch_idx", -1)
+                strat_name = b.get("strategy", "Unknown Strategy")
+                success_str = "SUCCESS" if b.get("success") else "FAILED"
+                igd_val = b.get("igd", float("inf"))
+                if isinstance(igd_val, float) and igd_val != float("inf"):
+                    igd_str = f"{igd_val:.5f}"
+                else:
+                    igd_str = str(igd_val)
+                stats_header += f"#   - Branch {b_idx} ({strat_name}): {success_str} | Final IGD: {igd_str}\n"
+                
+                b_m = b.get("metrics", {})
+                if "coder" in b_m and b_m["coder"]:
+                    c = b_m["coder"]
+                    stats_header += f"#     * Coder: SUCCESS | Latency: {c.get('latency', 0.0):.2f}s | Tokens: {c.get('total_tokens', 0):,} (Prompt: {c.get('prompt_tokens', 0):,}, Completion: {c.get('completion_tokens', 0):,})\n"
+                else:
+                    stats_header += f"#     * Coder: FAILED or SKIPPED\n"
+                
+                s_fixes = b_m.get("static_fixes", [])
+                if s_fixes:
+                    s_latency = sum(x.get("latency", 0.0) for x in s_fixes)
+                    s_tokens = sum(x.get("total_tokens", 0) for x in s_fixes)
+                    s_prompt = sum(x.get("prompt_tokens", 0) for x in s_fixes)
+                    s_completion = sum(x.get("completion_tokens", 0) for x in s_fixes)
+                    stats_header += f"#     * Static Fixer: {len(s_fixes)} attempts | Total Latency: {s_latency:.2f}s | Total Tokens: {s_tokens:,} (Prompt: {s_prompt:,}, Completion: {s_completion:,})\n"
+                else:
+                    stats_header += f"#     * Static Fixer: 0 attempts\n"
+                    
+                r_fixes = b_m.get("runtime_fixes", [])
+                if r_fixes:
+                    r_latency = sum(x.get("latency", 0.0) for x in r_fixes)
+                    r_tokens = sum(x.get("total_tokens", 0) for x in r_fixes)
+                    r_prompt = sum(x.get("prompt_tokens", 0) for x in r_fixes)
+                    r_completion = sum(x.get("completion_tokens", 0) for x in r_fixes)
+                    stats_header += f"#     * Runtime Fixer: {len(r_fixes)} attempts | Total Latency: {r_latency:.2f}s | Total Tokens: {r_tokens:,} (Prompt: {r_prompt:,}, Completion: {r_completion:,})\n"
+                else:
+                    stats_header += f"#     * Runtime Fixer: 0 attempts\n"
+
+        if "judge" in perf_stats["stages"]:
+            j = perf_stats["stages"]["judge"]
+            judge_status = "SUCCESS" if 'judge_result' in locals() else "FAILED (Fallback)"
+            stats_header += f"#   - Judge/Selector: {judge_status} | Latency: {j.get('latency', 0.0):.2f}s | Tokens: {j.get('total_tokens', 0):,} (Prompt: {j.get('prompt_tokens', 0):,}, Completion: {j.get('completion_tokens', 0):,})\n"
+
+        winner_id = judge_result.winning_branch_id if 'judge_result' in locals() else None
+        if winner_id is not None:
+            strat_name = STRATEGIES_SHORT[winner_id % len(STRATEGIES_SHORT)]
+            stats_header += f"# Winning Branch: {winner_id} (Strategy: {strat_name})\n"
+
+        stats_header += "#\n# Raw Operator Stats JSON:\n"
+        perf_stats_json_str = json.dumps(perf_stats, indent=2)
+        for line in perf_stats_json_str.split("\n"):
+            stats_header += f"# {line}\n"
+
+        stats_header += "# ==============================================================================\n\n"
+
+        final_code = stats_header + final_code
+
         await status_callback("result_code", "Final Optimized Code", final_code)
         if run_dir:
             save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)  # noqa: E701
+
         await status_callback(
             "step_done",
             "Success",
@@ -626,10 +806,15 @@ async def run_pipeline(matlab_code: str, status_callback):
             step_id="finish",
             is_success=True,
         )
+        return perf_stats
 
     except Exception as e:
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
+        try:
+            save_perf_stats()
+        except:
+            pass
         await status_callback("log", "FATAL", str(e))
         if run_dir:
             save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())  # noqa: E701
