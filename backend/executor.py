@@ -189,9 +189,9 @@ async def execute_code(
 
 
 def parse_igd_from_stdout(stdout: str) -> list[float]:
-    """Extract IGD values from standard output"""
+    """Extract IGD or PERF values from standard output"""
     igds = []
-    matches = re.findall(r"IGD:\s*([+-]?([0-9]*[.])?[0-9]+|nan)", stdout, re.IGNORECASE)
+    matches = re.findall(r"(?:IGD|PERF):\s*([+-]?([0-9]*[.])?[0-9]+|nan)", stdout, re.IGNORECASE)
     for m in matches:
         val_str = m[0]
         try:

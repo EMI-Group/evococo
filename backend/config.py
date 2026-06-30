@@ -19,9 +19,10 @@ if not os.path.exists(ENV_PATH) and os.path.exists(ENV_EXAMPLE_PATH):
 
 # Load environment variables FIRST before setting config defaults
 load_dotenv(ENV_PATH)
+TRANSLATION_MODE = os.getenv("TRANSLATION_MODE", "algorithm")
 
 # --- Tournament Engine Settings ---
-NUM_BRANCHES = 6
+NUM_BRANCHES = 3 if TRANSLATION_MODE == "problem" else 6
 
 # --- LLM Generation Settings ---
 # Reasoning effort for supported models (e.g., o1/o3-mini).
@@ -51,7 +52,7 @@ LLM_PROVIDERS = {
     }
 }
 # Tensorization strategies to inject for each branch
-STRATEGIES_SHORT = [
+STRATEGIES_SHORT_ALGO = [
     "BROADCASTING (No Loops)",
     "EINSUM OPTIMIZATION",
     "MASKED OPS (No If/Else)",
@@ -60,7 +61,7 @@ STRATEGIES_SHORT = [
     "JIT-COMPLIANT PEELING",
 ]
 
-STRATEGIES_FULL = [
+STRATEGIES_FULL_ALGO = [
     "STRATEGY: BROADCASTING EXPERT. Use standard PyTorch broadcasting (unsqueeze, expand) for all matrix operations. Strictly NO for-loops.",
     "STRATEGY: EINSUM OPTIMIZATION. Use `torch.einsum` for all matrix multiplications and dimension reductions. It is cleaner and faster.",
     "STRATEGY: MASKED OPERATIONS. Avoid `if/else` logic. Use `torch.where`, `torch.masked_fill` to handle conditional logic on tensors.",
@@ -68,6 +69,31 @@ STRATEGIES_FULL = [
     "STRATEGY: ADVANCED OPS. Use high-level PyTorch functions like `torch.cdist`, `torch.linalg.norm` instead of manual formulas.",
     "STRATEGY: JIT-COMPLIANT PEELING. Strictly avoid CPU-GPU sync. NO `.item()` or `.tolist()`. Pre-allocate fixed-size tensor buffers (e.g. `torch.empty`) and use tensor slice indexing `buffer[offset:offset+N] = ...` instead of Python dynamically growing `lists`.",
 ]
+
+STRATEGIES_SHORT_PROB = [
+    "PURE EINSUM/BMM",
+    "ADVANCED BROADCASTING",
+    "STEP-BY-STEP MATH",
+    "IN-PLACE MEMORY EFFICIENT",
+    "STRICT BOUNDARY CLAMPING",
+    "JIT-COMPLIANT MATH",
+]
+
+STRATEGIES_FULL_PROB = [
+    "STRATEGY: PURE EINSUM/BMM. Convert complex summations and pairwise matrix multiplications in objective evaluation to `torch.einsum` or `torch.bmm`. This avoids broadcasting memory blowouts for N individuals.",
+    "STRATEGY: ADVANCED BROADCASTING. Exploit PyTorch broadcasting `(N, 1, M) - (1, D, M)` aggressively. Avoid any explicit loops over individuals or dimensions.",
+    "STRATEGY: STEP-BY-STEP MATH. Break complex one-liner equations into explicit step-by-step intermediate tensor assignments. Do NOT merge multi-stage mathematical equations into one line, to prevent Out-of-Memory (OOM).",
+    "STRATEGY: IN-PLACE MEMORY EFFICIENT. Use `.add_()`, `.mul_()` to update intermediate metric calculations and save GPU memory.",
+    "STRATEGY: STRICT BOUNDARY CLAMPING. Ensure boundaries are respected. Heavily use `torch.clamp` and explicitly prevent division-by-zero or NaNs using `torch.nan_to_num`.",
+    "STRATEGY: JIT-COMPLIANT MATH. Strictly avoid CPU-GPU sync. NO `.item()` or `.tolist()` in the mathematical evaluation block. Force fully vectorized tensor ops.",
+]
+
+if TRANSLATION_MODE == "problem":
+    STRATEGIES_SHORT = STRATEGIES_SHORT_PROB
+    STRATEGIES_FULL = STRATEGIES_FULL_PROB
+else:
+    STRATEGIES_SHORT = STRATEGIES_SHORT_ALGO
+    STRATEGIES_FULL = STRATEGIES_FULL_ALGO
 
 # --- Static Checker (Ruff) Settings ---
 IGNORE_RUFF_CODES = [
@@ -88,7 +114,17 @@ MAX_RETAINED_WORKSPACES = 1000
 # --- Path Configurations ---
 BASE_WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "temp_workspace")
 HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
-PROMPTS_DIR = os.path.join(BACKEND_DIR, "prompts")
+PROMPTS_BASE_DIR = os.path.join(BACKEND_DIR, "prompts")
+PROMPTS_DIR = os.path.join(PROMPTS_BASE_DIR, TRANSLATION_MODE)
+GT_DATA_DIR = os.path.join(PROJECT_ROOT, os.getenv("GT_DATA_DIR", "experiments/gt_data"))
+
+def get_prompt_path(filename):
+    mode_path = os.path.join(PROMPTS_DIR, filename)
+    if os.path.exists(mode_path):
+        return mode_path
+    return os.path.join(PROMPTS_BASE_DIR, filename)
+
 DATABASE_DIR = os.path.join(BACKEND_DIR, "database")
-RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
-GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
+_mode_db_path = os.path.join(DATABASE_DIR, f"rag_db_{TRANSLATION_MODE}.json")
+RULES_DB_PATH = _mode_db_path if os.path.exists(_mode_db_path) else os.path.join(DATABASE_DIR, "rag_db.json")
+GLOBAL_SPEC_PATH = get_prompt_path("0_global_spec.md")

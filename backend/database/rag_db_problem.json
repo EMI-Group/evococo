@@ -1,0 +1,65 @@
+{
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "Bug #1 (Vectorized Math Compliance)",
+      "description": "Evaluation logic must handle batched tensors, not individual scalars.",
+      "action": "must",
+      "keywords": [
+        "for",
+        "loop",
+        "individual"
+      ],
+      "always_apply": true,
+      "instruction": "Do NOT iterate over N individuals. Translate complex mathematical formulas directly into PyTorch broadcasting semantics."
+    },
+    {
+      "id": "Bug #2 (Division by Zero Prevention)",
+      "description": "Evaluation often involves division which can lead to NaN if vectors are zero.",
+      "action": "must",
+      "keywords": [
+        "division",
+        "/",
+        "nan"
+      ],
+      "always_apply": true,
+      "instruction": "Always protect division operations with `torch.clamp(denominator, min=1e-8)` or use `torch.nan_to_num`."
+    },
+    {
+      "id": "Bug #3 (Exact Mathematical Fidelity)",
+      "description": "Constants and formula structures must strictly mirror the MATLAB code.",
+      "action": "must",
+      "keywords": [
+        "formula",
+        "math",
+        "constant"
+      ],
+      "always_apply": true,
+      "instruction": "NEVER simplify or drop parts of objective equations (e.g. cosine penalties). Transcribe exactly."
+    },
+    {
+      "id": "Bug #4 (Broadcasting Mismatches)",
+      "description": "Direct subtraction of unmatched tensors causes runtime crashes.",
+      "action": "must",
+      "keywords": [
+        "subtract",
+        "distance",
+        "diff"
+      ],
+      "always_apply": true,
+      "instruction": "Explicitly use `.unsqueeze()` to align dimensions before applying arithmetic operations across different axes."
+    },
+    {
+      "id": "Bug #5 (Matrix Transposition)",
+      "description": "MATLAB often uses col-major for individuals. EvoX expects (N, D).",
+      "action": "must",
+      "keywords": [
+        "shape",
+        "transpose",
+        "dimension"
+      ],
+      "always_apply": false,
+      "instruction": "If the source evaluates on columns `(D, N)`, you must adapt the formula for row-major `(N, D)`."
+    }
+  ]
+}

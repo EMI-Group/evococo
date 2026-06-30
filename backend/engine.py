@@ -24,6 +24,9 @@ from .config import (
     HISTORY_DIR,
     PROMPTS_DIR,
     MAX_RETAINED_WORKSPACES,
+    GT_DATA_DIR,
+    TRANSLATION_MODE,
+    get_prompt_path,
 )
 
 
@@ -57,7 +60,7 @@ def load_global_spec():
 
 def load_resource(filename):
     """Load resource files (SDK, Examples, Reference Context)"""
-    path = os.path.join(PROMPTS_DIR, filename)
+    path = get_prompt_path(filename)
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
@@ -189,6 +192,7 @@ async def run_single_branch_lifecycle(
             blueprint_plan=blueprint_md,
             asset_library=asset_lib_content,
             few_shot_examples=few_shot_content,
+            gt_data_dir=GT_DATA_DIR,
             temperature=current_temp,
             metrics_out=coder_metrics
         )
@@ -240,7 +244,7 @@ async def run_single_branch_lifecycle(
         # =================================================
         # STEP 6: RUNTIME FIXER
         # =================================================
-        MAX_RUNTIME_RETRIES = 2
+        MAX_RUNTIME_RETRIES = 10 if TRANSLATION_MODE == "problem" else 2
         best_igd_in_branch = float("inf")
         best_history = []
 
@@ -607,16 +611,27 @@ async def run_pipeline(matlab_code: str, status_callback):
         for res in results:
             if res["success"]:
                 valid_candidates_exist = True
-            candidates_data.append(
-                {
-                    "branch_id": res["branch_idx"],
-                    "success": res["success"],
-                    "final_igd": res["igd"],
-                    "igd_history": res["igd_history"],
-                    "exec_time": res.get("exec_time", -1.0),
-                    "code_snippet": res["code"],
-                }
-            )
+            
+            if TRANSLATION_MODE == "problem":
+                candidates_data.append(
+                    {
+                        "branch_id": res["branch_idx"],
+                        "success": res["success"],
+                        "execution_time_sec": res["igd"],
+                        "code_snippet": res["code"],
+                    }
+                )
+            else:
+                candidates_data.append(
+                    {
+                        "branch_id": res["branch_idx"],
+                        "success": res["success"],
+                        "final_igd": res["igd"],
+                        "igd_history": res["igd_history"],
+                        "exec_time": res.get("exec_time", -1.0),
+                        "code_snippet": res["code"],
+                    }
+                )
 
         if run_dir:
             save_artifact(run_dir, "7_candidates_raw.json", candidates_data)

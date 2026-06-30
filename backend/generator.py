@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from .config import REASONING_EFFORT, LLM_PROVIDERS
+from .config import REASONING_EFFORT, LLM_PROVIDERS, get_prompt_path
 
 # 1. Load environment variables
 load_dotenv()
@@ -31,15 +31,13 @@ client = AsyncOpenAI(
     max_retries=3
 )
 
-PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
-
 
 def _load_prompt(filename, **kwargs):
     """
     Reads and populates the Markdown prompt template.
     Uses .replace() instead of .format() to avoid conflicts with JSON braces.
     """
-    path = os.path.join(PROMPT_DIR, filename)
+    path = get_prompt_path(filename)
     if not os.path.exists(path):
         print(f">>> [ERROR] Prompt file not found: {path}")
         return f"Error: Prompt file {filename} not found."
