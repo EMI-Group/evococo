@@ -28,7 +28,7 @@ ruff check --ignore E501,E402,E722,E731,E741,E701,E702,E703,I <file>
 
 ## Architecture
 
-EvoCoder translates MATLAB evolutionary algorithm code into tensorized PyTorch/EvoX implementations using a multi-agent LLM pipeline. The frontend sends MATLAB code over WebSocket → backend orchestrates a 7-stage tournament → best Python implementation returned.
+EvoCoCo translates MATLAB evolutionary algorithm code into tensorized PyTorch/EvoX implementations using a multi-agent LLM pipeline. The frontend sends MATLAB code over WebSocket → backend orchestrates a 7-stage tournament → best Python implementation returned.
 
 ### Backend modules (`backend/`)
 

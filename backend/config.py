@@ -1,5 +1,5 @@
 """
-Global Configuration for EvoCoder
+Global Configuration for EvoCoCo
 """
 
 import os

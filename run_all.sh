@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==============================================================================
-# EvoCoder Full Batch Translation Script
+# EvoCoCo Full Batch Translation Script
 # ==============================================================================
 
 # Activate the conda environment (optional, depending on how you run this script)
@@ -17,7 +17,7 @@ REPEATS=1
 LOG_FILE="batch_translate_all.log"
 
 echo "==============================================================="
-echo "Starting EvoCoder Full Batch Translation..."
+echo "Starting EvoCoCo Full Batch Translation..."
 echo "Input Directory:  $INPUT_DIR"
 echo "Output Directory: $OUTPUT_DIR"
 echo "Repeats:          $REPEATS"

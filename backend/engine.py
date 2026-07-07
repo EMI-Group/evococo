@@ -720,7 +720,7 @@ async def run_pipeline(matlab_code: str, status_callback):
         # Construct and prepend performance stats header comment block
         stats_header = (
             "# ==============================================================================\n"
-            f"# EvoCoder Performance Statistics\n"
+            f"# EvoCoCo Performance Statistics\n"
             f"# Total LLM Time: {perf_stats['total_llm_time']:.2f}s\n"
             f"# Total Tokens: {perf_stats['total_tokens']['total']:,} "
             f"(Prompt: {perf_stats['total_tokens']['prompt']:,}, Completion: {perf_stats['total_tokens']['completion']:,})\n"

@@ -1,4 +1,4 @@
-# System Architecture Standard (EvoCoder)
+# System Architecture Standard (EvoCoCo)
 
 ## 0. Target Environment (Unconstrained Only)
 * **Optimization Type**: Unconstrained Evolutionary Optimization.
