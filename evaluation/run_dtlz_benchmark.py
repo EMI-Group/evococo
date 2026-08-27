@@ -50,14 +50,17 @@ def main():
     spec.loader.exec_module(module)
 
     # Find the algorithm class
-    algo_class = getattr(module, module_name.replace("-", "").replace("_", ""))
-    # If the class name has hyphens removed but is still different, we can search for a subclass of evox.core.Algorithm
-    if not hasattr(module, module_name.replace("-", "").replace("_", "")):
+    expected_class_name = module_name.replace("-", "").replace("_", "")
+    algo_class = getattr(module, expected_class_name, None)
+    # If the normalized filename still differs from the class name, search for the algorithm subclass.
+    if algo_class is None:
         for attr_name in dir(module):
             attr = getattr(module, attr_name)
             if isinstance(attr, type) and issubclass(attr, evox.core.Algorithm) and attr.__name__ != "Algorithm":
                 algo_class = attr
                 break
+    if algo_class is None:
+        raise ValueError(f"No EvoX Algorithm subclass found in {args.algo_file}")
     
     # Initialize algorithm
     try:
@@ -98,7 +101,9 @@ def main():
         final_igd = float('inf')
 
     # Ensure output dir exists
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    output_dir = os.path.dirname(args.output)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     
     # Write to CSV
     file_exists = os.path.isfile(args.output)

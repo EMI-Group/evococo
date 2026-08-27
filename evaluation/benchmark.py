@@ -123,7 +123,7 @@ async def main():
             if syntax_pass:
                 # Prepend global torch.compile bypass and set threads to 1 to avoid JIT compilation overhead, hangs, and CPU thrashing
                 modified_code = "import torch\ntorch.set_num_threads(1)\ntorch.compile = lambda fn, *args, **kwargs: fn\n" + code
-                if "if __name__ ==" not in code.replace(' ', ''):
+                if not re.search(r'''if\s+__name__\s*==\s*["']__main__["']\s*:''', code):
                     # Need to inject harness
                     m = re.search(r"class\s+([A-Za-z0-9_]+)\s*\(", code)
                     if m:
