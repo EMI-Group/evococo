@@ -6,4 +6,8 @@ websockets
 watchfiles
 torch
 evox
+evomo
 openai
+httpx
+pydantic
+ruff
