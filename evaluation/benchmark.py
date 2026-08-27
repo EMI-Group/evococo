@@ -66,7 +66,11 @@ def test_syntax(code: str) -> bool:
 async def main():
     parser = argparse.ArgumentParser(description="Evaluate generated algorithm codes.")
     parser.add_argument("-d", "--dir", type=str, required=True, help="Directory containing .py scripts to benchmark")
+    parser.add_argument("--workers", type=int, default=8, help="Number of concurrent benchmark workers")
     args = parser.parse_args()
+
+    if args.workers < 1:
+        parser.error("--workers must be at least 1")
 
     report_file = os.path.join(args.dir, "benchmark_report.json")
     results = []
@@ -90,7 +94,7 @@ async def main():
     print(f"{'File':<30} | {'Syntax':<6} | {'Static':<6} | {'Exec':<6} | {'Optim':<6} | {'IGD':<8} | {'Time(s)'}")
     print("-" * 90)
 
-    sem = asyncio.Semaphore(8)
+    sem = asyncio.Semaphore(args.workers)
     write_lock = asyncio.Lock()
 
     async def evaluate_single_file(py_file):

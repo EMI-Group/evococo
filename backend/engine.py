@@ -385,7 +385,6 @@ async def run_pipeline(matlab_code: str, status_callback):
     try:
         run_dir = ensure_history_dir(algo_name)
     except Exception as e:
-        import traceback
         print(f"FAILED TO CREATE HISTORY DIR: {e}")
         traceback.print_exc()
         run_dir = None

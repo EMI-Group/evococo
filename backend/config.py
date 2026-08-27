@@ -39,6 +39,11 @@ LLM_PROVIDERS = {
         "model": os.getenv("DEEPSEEK_MODEL_PRO", "deepseek-v4-pro"),
         "api_key_env": "DEEPSEEK_API_KEY"
     },
+    "deepseek-v4-flash": {
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        "model": os.getenv("DEEPSEEK_MODEL_FLASH", "deepseek-v4-flash"),
+        "api_key_env": "DEEPSEEK_API_KEY"
+    },
     "gemini": {
         "base_url": os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"),
         "model": os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),

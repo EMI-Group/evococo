@@ -3,6 +3,7 @@ import sys
 import argparse
 import asyncio
 import re
+import time
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
@@ -12,7 +13,7 @@ load_dotenv(dotenv_path)
 
 # Import backend configuration dynamically
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from backend.config import LLM_PROVIDERS
+from backend.config import LLM_PROVIDERS  # noqa: E402
 
 ACTIVE_PROVIDER = os.getenv("ACTIVE_LLM_PROVIDER", "litellm")
 if ACTIVE_PROVIDER in LLM_PROVIDERS:
@@ -214,7 +215,9 @@ if __name__ == "__main__":
     print(f"Execution time for Gen 2-50 (49 steps): {exec_time:.4f}s (Avg: {exec_time / 49:.4f}s/gen)")
 """
 
-async def one_shot_translate(matlab_code: str) -> str:
+async def one_shot_translate_with_metrics(matlab_code: str) -> tuple[str, dict]:
+    """Translate one algorithm and retain the provider's complete usage counters."""
+    start_time = time.perf_counter()
     try:
         prompt = SYSTEM_PROMPT_ONESHOT.format(
             GLOBAL_SPEC=GLOBAL_SPEC_TEXT,
@@ -225,6 +228,15 @@ async def one_shot_translate(matlab_code: str) -> str:
         kwargs_api = {}
         if ACTIVE_PROVIDER == "litellm":
             kwargs_api["extra_body"] = {"reasoning_effort": "minimal"}
+        elif ACTIVE_PROVIDER.startswith("deepseek"):
+            requested_effort = os.getenv("DEEPSEEK_REASONING_EFFORT", "").strip()
+            if requested_effort.lower() not in {
+                "",
+                "auto",
+                "default",
+                "provider_default",
+            }:
+                kwargs_api["reasoning_effort"] = requested_effort
 
         response = await client.chat.completions.create(
             model=MODEL_NAME,
@@ -235,25 +247,64 @@ async def one_shot_translate(matlab_code: str) -> str:
                 }
             ],
             temperature=0.0,
-            timeout=400.0,
-            stream=True,
+            timeout=float(os.getenv("DEEPSEEK_REQUEST_TIMEOUT_SECONDS", "1200")),
+            stream=False,
             **kwargs_api,
         )
-        
-        chunks = []
-        async for chunk in response:
-            if chunk.choices and chunk.choices[0].delta.content:
-                chunks.append(chunk.choices[0].delta.content)
-        content = "".join(chunks)
+
+        message = response.choices[0].message
+        content = message.content or ""
         
         # Clean up any accidentally generated markdown code block tags
         content = re.sub(r"^```[a-zA-Z]*\s*\n", "", content)
         content = re.sub(r"\n```\s*$", "", content)
         content = content.replace("```", "").strip()
-        return content
+
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            usage_data = {}
+        elif hasattr(usage, "model_dump"):
+            usage_data = usage.model_dump()
+        else:
+            usage_data = dict(usage)
+
+        completion_details = usage_data.get("completion_tokens_details") or {}
+        reasoning_content = getattr(message, "reasoning_content", None) or ""
+        metrics = {
+            "provider": ACTIVE_PROVIDER,
+            "requested_model": MODEL_NAME,
+            "response_model": getattr(response, "model", None),
+            "finish_reason": response.choices[0].finish_reason,
+            "requested_reasoning_effort": kwargs_api.get("reasoning_effort"),
+            "latency_seconds": time.perf_counter() - start_time,
+            "prompt_tokens": int(usage_data.get("prompt_tokens", 0) or 0),
+            "prompt_cache_hit_tokens": int(
+                usage_data.get("prompt_cache_hit_tokens", 0) or 0
+            ),
+            "prompt_cache_miss_tokens": int(
+                usage_data.get("prompt_cache_miss_tokens", 0) or 0
+            ),
+            "completion_tokens": int(usage_data.get("completion_tokens", 0) or 0),
+            "reasoning_tokens": int(completion_details.get("reasoning_tokens", 0) or 0),
+            "total_tokens": int(usage_data.get("total_tokens", 0) or 0),
+            "reasoning_characters": len(reasoning_content),
+            "output_characters": len(content),
+        }
+        return content, metrics
     except Exception as e:
         print(f"Translation Error: {e}")
-        return ""
+        return "", {
+            "provider": ACTIVE_PROVIDER,
+            "requested_model": MODEL_NAME,
+            "latency_seconds": time.perf_counter() - start_time,
+            "error": str(e),
+        }
+
+
+async def one_shot_translate(matlab_code: str) -> str:
+    """Backward-compatible translation API used by the original batch script."""
+    content, _ = await one_shot_translate_with_metrics(matlab_code)
+    return content
 
 async def main():
     parser = argparse.ArgumentParser(description="One-shot MATLAB to Python Translation Baseline")

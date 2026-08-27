@@ -1,7 +1,9 @@
 import os
+import asyncio
 import json
 import re
 import time
+import httpx
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -22,16 +24,43 @@ API_KEY = os.getenv(provider_config["api_key_env"])
 BASE_URL = provider_config["base_url"]
 MODEL_NAME = provider_config["model"]
 TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
+LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", 15.0))
+LLM_READ_TIMEOUT = float(os.getenv("LLM_READ_TIMEOUT", 600.0))
+LLM_NETWORK_RETRY_INTERVAL = float(os.getenv("LLM_NETWORK_RETRY_INTERVAL", 15.0))
 
 # 3. Initialize OpenAI Async Client
 client = AsyncOpenAI(
     api_key=API_KEY, 
     base_url=BASE_URL,
-    timeout=120.0,
-    max_retries=3
+    timeout=httpx.Timeout(LLM_READ_TIMEOUT, connect=LLM_CONNECT_TIMEOUT),
+    max_retries=10
 )
 
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+
+
+async def _wait_for_provider_network():
+    """Pause DeepSeek calls while the provider endpoint is unreachable."""
+    if not ACTIVE_PROVIDER.startswith("deepseek"):
+        return
+
+    attempt = 0
+    while True:
+        try:
+            timeout = httpx.Timeout(10.0, connect=5.0)
+            async with httpx.AsyncClient(timeout=timeout) as probe:
+                await probe.get(BASE_URL)
+            if attempt:
+                print(">>> [NETWORK] DeepSeek endpoint reachable; resuming LLM call.")
+            return
+        except httpx.TransportError as exc:
+            attempt += 1
+            if attempt == 1 or attempt % 4 == 0:
+                print(
+                    f">>> [NETWORK] DeepSeek endpoint unavailable ({exc}); "
+                    f"retrying in {LLM_NETWORK_RETRY_INTERVAL:.0f}s."
+                )
+            await asyncio.sleep(LLM_NETWORK_RETRY_INTERVAL)
 
 
 def _load_prompt(filename, **kwargs):
@@ -80,6 +109,7 @@ async def generate_llm_response(
             # We enforce JSON object returned to assist Pydantic structure mapping
             kwargs_api["response_format"] = {"type": "json_object"}
 
+        await _wait_for_provider_network()
         start_time = time.perf_counter()
         response = await client.chat.completions.create(
             model=MODEL_NAME,

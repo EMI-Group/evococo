@@ -212,6 +212,7 @@ run_history/
 # Experiments generated results
 experiments/benchmark_results/
 experiments/baselines/
+experiments/matlab_code/
 experiments/benchmark_results_final/
 experiments/Untested_High_Algorithms
 experiments/benchmark_results_untested
@@ -228,4 +229,5 @@ experiments/baseline*
 experiments/ablation_subset_results_glm51
 experiments/evococo-48
 experiments/evococo_*
-
+experiments/evococo-*
+experiments_private/
