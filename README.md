@@ -18,14 +18,8 @@
 </p>
 
 <div align="center">
-  <a href="https://arxiv.org/abs/2503.20286">
-    <img src="https://img.shields.io/badge/EvoMO%20paper-arXiv-red?style=for-the-badge" alt="EvoMO Paper on arXiv">
-  </a>
-  <a href="https://github.com/EMI-Group/evox">
-    <img src="https://img.shields.io/badge/Built%20with-EvoX-C8383C?style=for-the-badge" alt="Built with EvoX">
-  </a>
-  <a href="https://github.com/EMI-Group/evococo/blob/main/LICENSE">
-    <img src="https://img.shields.io/github/license/EMI-Group/evococo?style=for-the-badge" alt="License">
+  <a href="https://arxiv.org/abs/XXXX.XXXXX">
+    <img src="https://img.shields.io/badge/EvoCoCo%20paper-arXiv-red?style=for-the-badge" alt="EvoCoCo Paper on arXiv">
   </a>
 </div>
 
@@ -39,9 +33,8 @@
 6. [Experiments and Benchmarking](#experiments-and-benchmarking)
 7. [Generated Algorithms](#generated-algorithms)
 8. [Project Structure](#project-structure)
-9. [Security Notice](#security-notice)
-10. [Community and Support](#community-and-support)
-11. [License](#license)
+9. [Community and Support](#community-and-support)
+10. [License](#license)
 
 ## Overview
 
@@ -165,6 +158,10 @@ implementation when the tournament finishes.
 > Keep the backend terminal open while using the browser interface so progress and error messages
 > remain visible.
 
+> [!NOTE]
+> Validation executes generated Python code; use trusted inputs and run EvoCoCo locally or in an
+> isolated environment.
+
 ## Experiments and Benchmarking
 
 ### Batch translation
@@ -235,13 +232,6 @@ evococo/
 ├── requirements.txt
 └── README.md
 ```
-
-## Security Notice
-
-> [!WARNING]
-> EvoCoCo executes LLM-generated Python code during validation. Run it only in a trusted, isolated
-> environment, review generated code before reuse, and do not expose the backend directly to an
-> untrusted network or untrusted users.
 
 <!--
 ## Citing EvoCoCo
