@@ -211,3 +211,8 @@ run_history/
 
 # Experiments generated results
 experiments_private/
+evaluation_results/
+experiments/generated_algorithms/benchmark_report.json
+
+# External benchmark dependency (install separately and set PLATEMO_ROOT)
+PlatEMO-master/
