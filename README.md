@@ -99,7 +99,7 @@ Give the following instruction to a coding agent with terminal access:
 Install and validate this EvoCoCo repository:
 python -m pip install -r requirements.txt
 python -m compileall -q backend evaluation experiments
-python evaluation/benchmark.py --help
+python evaluation/run_migration_reliability_benchmark.py --help
 
 Report the Python, PyTorch, EvoX, and EvoMO versions, CUDA availability, and validation results.
 Do not call LLM APIs or run translation experiments during installation.
@@ -181,30 +181,98 @@ python experiments/batch_translate.py \
 Each pipeline run starts six candidate branches and can consume multiple LLM requests. Begin with
 one repeat and one concurrent run when validating a new provider configuration.
 
-### Benchmark generated Python algorithms
+### Validate migration reliability
 
-Run the standard syntax, static, execution, and IGD checks on a directory of Python files:
+Run syntax, Ruff, execution, and DTLZ2 convergence checks on the 48 selected implementations:
 
 ```bash
-python evaluation/benchmark.py \
+python evaluation/run_migration_reliability_benchmark.py \
   --dir experiments/generated_algorithms \
   --workers 1
 ```
 
-The command writes `benchmark_report.json` into the evaluated directory. Increase `--workers`
-carefully because each worker may allocate GPU memory.
+The command writes `benchmark_report.json` into the evaluated directory; this generated report is
+ignored by Git. Increase `--workers` carefully because each worker may allocate GPU memory. This
+public command validates the selected implementations rather than rerunning the five independent
+translation attempts used to calculate the paper's migration success rate.
 
-### Run one DTLZ evaluation
+### Evaluate optimization fidelity
+
+Start with one short EvoX run:
 
 ```bash
-python evaluation/run_dtlz_benchmark.py \
-  --algo_file experiments/generated_algorithms/AGE-MOEA.py \
-  --problem DTLZ2 \
-  --seed 1 \
-  --output results/age_moea_dtlz2.csv
+python evaluation/run_optimization_fidelity_benchmark.py \
+  --algorithm-file experiments/generated_algorithms/AGE-MOEA.py \
+  --suite DTLZ \
+  --problems DTLZ2 \
+  --runs 2 \
+  --generations 10 \
+  --gpu 0 \
+  --output-dir evaluation_results/fidelity_smoke
 ```
 
-Supported problems are DTLZ1 through DTLZ7.
+For the complete comparison, install PlatEMO separately and generate its 21-run references:
+
+```bash
+PLATEMO_ROOT=/path/to/PlatEMO matlab -batch \
+  "run('evaluation/run_platemo_optimization_fidelity_benchmark.m')"
+```
+
+Then evaluate all 48 generated implementations on DTLZ, WFG, LSMOP, and MaF:
+
+```bash
+python evaluation/run_optimization_fidelity_benchmark.py \
+  --algorithm-dir experiments/generated_algorithms \
+  --suite all \
+  --runs 21 \
+  --reference-csv evaluation_results/platemo_fidelity/platemo_reference.csv \
+  --gpu 0
+```
+
+This full command launches 48 × 40 × 21 isolated EvoX trials. Results are resumable and written to
+`evaluation_results/fidelity/`: `trials.csv` retains per-seed IGD, runtime, and failures, while
+`summary.csv` reports mean IGD, the PlatEMO reference, absolute and relative differences, and the
+fidelity classification.
+
+### Measure computational scaling and speedup
+
+First generate the two PlatEMO timing baselines:
+
+```bash
+PLATEMO_ROOT=/path/to/PlatEMO matlab -batch \
+  "run('evaluation/run_platemo_computational_scalability_population_benchmark.m')"
+
+PLATEMO_ROOT=/path/to/PlatEMO matlab -batch \
+  "run('evaluation/run_platemo_computational_scalability_dimension_benchmark.m')"
+```
+
+Run the corresponding compiled EvoX population-scaling experiment on one GPU:
+
+```bash
+python evaluation/run_computational_scalability_benchmark.py \
+  --algorithm-dir experiments/generated_algorithms \
+  --scaling population \
+  --platemo-csv evaluation_results/platemo_scaling/platemo_population_scaling.csv \
+  --gpu 0
+```
+
+Run dimension scaling by changing the mode and baseline CSV:
+
+```bash
+python evaluation/run_computational_scalability_benchmark.py \
+  --algorithm-dir experiments/generated_algorithms \
+  --scaling dimension \
+  --platemo-csv evaluation_results/platemo_scaling/platemo_dimension_scaling.csv \
+  --gpu 0
+```
+
+The defaults use DTLZ3, 11 repeats, 100 timed generations, seven population sizes, and seven
+decision dimensions. Trials run serially in isolated subprocesses and can be resumed. The default
+mode is `torch.compile`; pass `--executions eager` when compilation is unavailable. `speedup_x` is
+PlatEMO time per generation divided by EvoX time per generation using repeats completed by both
+systems. See
+[`evaluation/README.md`](evaluation/README.md) for the full population- and dimension-scaling
+protocol, timeout handling, output fields, and smoke-test commands.
 
 ## Generated Algorithms
 
@@ -227,7 +295,7 @@ evococo/
 ├── frontend/                        # Browser-based interactive interface
 ├── experiments/                     # Batch runners, baselines, and public artifacts
 │   └── generated_algorithms/        # 48 generated EvoX implementations
-├── evaluation/                      # Benchmark and DTLZ evaluation scripts
+├── evaluation/                      # Reliability, fidelity, and scaling benchmarks
 ├── docs/images/                     # EvoX brand assets used by this README
 ├── requirements.txt
 └── README.md
