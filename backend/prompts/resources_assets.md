@@ -33,6 +33,10 @@ from evox.operators.selection import (
     tournament_selection_multifit,
     crowding_distance  # Remember: crowding_distance(objs, mask)
 )
+from evomo.operators.selection import (
+    nd_environmental_selection,
+    non_dominate_rank,
+)
 # Usage:
 #   # Single-objective tournament (min fitness wins)
 #   parent_idx = tournament_selection(n_round=pop_size, fitness=fit, tournament_size=2)
@@ -44,6 +48,13 @@ from evox.operators.selection import (
 #   # Crowding distance calculation for a given front (mask is boolean)
 #   # costs: (N, M), mask: (N,) bool
 #   cd = crowding_distance(costs, mask)      # (N,), larger = more diverse
+#
+#   # Returns five values; selected_cv is None for unconstrained problems.
+#   selected_pop, selected_fit, rank, cd, selected_cv = nd_environmental_selection(
+#       pop, fit, topk
+#   )
+#   # non_dominate_rank is zero-based: rank 0 is the first Pareto front.
+#   rank = non_dominate_rank(fit)
 
 # --- 4. Variation Operators (Standard) ---
 from evox.operators.crossover import (
