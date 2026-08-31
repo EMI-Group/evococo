@@ -12,11 +12,6 @@
   🌟 EvoCoCo: A Multi-Agent Framework for Semantics-Guided Automatic Tensorization 🌟
 </h2>
 
-<p align="center">
-  Automatically restructure evolutionary multiobjective optimization software into tensorized
-  PyTorch/EvoX programs while preserving its underlying algorithmic semantics.
-</p>
-
 <div align="center">
   <a href="https://arxiv.org/abs/XXXX.XXXXX">
     <img src="https://img.shields.io/badge/EvoCoCo%20paper-arXiv-red?style=for-the-badge" alt="EvoCoCo Paper on arXiv">
@@ -31,10 +26,9 @@
 4. [Configuration](#configuration)
 5. [Quick Start](#quick-start)
 6. [Experiments and Benchmarking](#experiments-and-benchmarking)
-7. [Generated Algorithms](#generated-algorithms)
-8. [Project Structure](#project-structure)
-9. [Community and Support](#community-and-support)
-10. [License](#license)
+7. [Project Structure](#project-structure)
+8. [Community and Support](#community-and-support)
+9. [License](#license)
 
 ## Overview
 
@@ -50,8 +44,9 @@ runtime repair, and candidate selection through shared intermediate representati
 closed-loop execution feedback.
 
 The system can be used through a browser interface or as a batch experiment runner. This
-repository also contains 48 generated algorithm implementations used in the accompanying
-experiments.
+repository includes 48 EvoCoCo-generated tensorized algorithms used in the accompanying
+experiments. The same algorithms are also integrated into
+[EvoMO](https://github.com/EMI-Group/evomo).
 
 ## Key Features
 
@@ -117,16 +112,11 @@ Copy the example configuration before starting EvoCoCo:
 cp .env.example .env
 ```
 
-Select one provider and add the corresponding API key:
+The following example uses Gemini:
 
 ```env
-ACTIVE_LLM_PROVIDER=zhipu
-OPENAI_TEMPERATURE=0.2
-
-ZHIPU_API_KEY=your_zhipu_api_key_here
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
+ACTIVE_LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key_here
-CUSTOM_API_KEY=your_custom_api_key_here
 ```
 
 Available provider names are `zhipu`, `deepseek-v4-pro`, `deepseek-v4-flash`, `gemini`, and
@@ -181,9 +171,9 @@ python experiments/batch_translate.py \
 Each pipeline run starts six candidate branches and can consume multiple LLM requests. Begin with
 one repeat and one concurrent run when validating a new provider configuration.
 
-### Validate migration reliability
+### Evaluation benchmarks
 
-Run syntax, Ruff, execution, and DTLZ2 convergence checks on the 48 selected implementations:
+Validate syntax, execution, and convergence of the 48 selected implementations:
 
 ```bash
 python evaluation/run_migration_reliability_benchmark.py \
@@ -191,99 +181,28 @@ python evaluation/run_migration_reliability_benchmark.py \
   --workers 1
 ```
 
-The command writes `benchmark_report.json` into the evaluated directory; this generated report is
-ignored by Git. Increase `--workers` carefully because each worker may allocate GPU memory. This
-public command validates the selected implementations rather than rerunning the five independent
-translation attempts used to calculate the paper's migration success rate.
-
-### Evaluate optimization fidelity
-
-Start with one short EvoX run:
-
-```bash
-python evaluation/run_optimization_fidelity_benchmark.py \
-  --algorithm-file experiments/generated_algorithms/AGE-MOEA.py \
-  --suite DTLZ \
-  --problems DTLZ2 \
-  --runs 2 \
-  --generations 10 \
-  --gpu 0 \
-  --output-dir evaluation_results/fidelity_smoke
-```
-
-For the complete comparison, install PlatEMO separately and generate its 21-run references:
-
-```bash
-PLATEMO_ROOT=/path/to/PlatEMO matlab -batch \
-  "run('evaluation/run_platemo_optimization_fidelity_benchmark.m')"
-```
-
-Then evaluate all 48 generated implementations on DTLZ, WFG, LSMOP, and MaF:
+Run the optimization-fidelity benchmark on a selected suite:
 
 ```bash
 python evaluation/run_optimization_fidelity_benchmark.py \
   --algorithm-dir experiments/generated_algorithms \
-  --suite all \
+  --suite DTLZ \
   --runs 21 \
-  --reference-csv evaluation_results/platemo_fidelity/platemo_reference.csv \
   --gpu 0
 ```
 
-This full command launches 48 × 40 × 21 isolated EvoX trials. Results are resumable and written to
-`evaluation_results/fidelity/`: `trials.csv` retains per-seed IGD, runtime, and failures, while
-`summary.csv` reports mean IGD, the PlatEMO reference, absolute and relative differences, and the
-fidelity classification.
-
-### Measure computational scaling and speedup
-
-First generate the two PlatEMO timing baselines:
-
-```bash
-PLATEMO_ROOT=/path/to/PlatEMO matlab -batch \
-  "run('evaluation/run_platemo_computational_scalability_population_benchmark.m')"
-
-PLATEMO_ROOT=/path/to/PlatEMO matlab -batch \
-  "run('evaluation/run_platemo_computational_scalability_dimension_benchmark.m')"
-```
-
-Run the corresponding compiled EvoX population-scaling experiment on one GPU:
+Run computational scaling with `torch.compile`:
 
 ```bash
 python evaluation/run_computational_scalability_benchmark.py \
   --algorithm-dir experiments/generated_algorithms \
   --scaling population \
-  --platemo-csv evaluation_results/platemo_scaling/platemo_population_scaling.csv \
   --gpu 0
 ```
 
-Run dimension scaling by changing the mode and baseline CSV:
-
-```bash
-python evaluation/run_computational_scalability_benchmark.py \
-  --algorithm-dir experiments/generated_algorithms \
-  --scaling dimension \
-  --platemo-csv evaluation_results/platemo_scaling/platemo_dimension_scaling.csv \
-  --gpu 0
-```
-
-The defaults use DTLZ3, 11 repeats, 100 timed generations, seven population sizes, and seven
-decision dimensions. Trials run serially in isolated subprocesses and can be resumed. The default
-mode is `torch.compile`; pass `--executions eager` when compilation is unavailable. `speedup_x` is
-PlatEMO time per generation divided by EvoX time per generation using repeats completed by both
-systems. See
-[`evaluation/README.md`](evaluation/README.md) for the full population- and dimension-scaling
-protocol, timeout handling, output fields, and smoke-test commands.
-
-## Generated Algorithms
-
-The [`experiments/generated_algorithms`](experiments/generated_algorithms) directory contains the
-48 EvoCoCo-generated Python implementations used as public experiment artifacts. They cover
-decomposition-based, dominance-based, indicator-based, sparse, particle-swarm, and many-objective
-optimization methods.
-
-These files are preserved as generated outputs. Consequently, a small number retain Ruff warnings
-such as unused imports or variables even though all 48 implementations pass syntax and execution
-checks in the provided benchmark environment.
+All benchmark runs are resumable. PlatEMO reference generation, the DTLZ/WFG/LSMOP/MaF options,
+dimension scaling, speedup calculation, output fields, and smoke tests are documented in
+[`evaluation/README.md`](evaluation/README.md).
 
 ## Project Structure
 
@@ -294,7 +213,7 @@ evococo/
 │   └── prompts/                     # Agent roles, specifications, and EvoX resources
 ├── frontend/                        # Browser-based interactive interface
 ├── experiments/                     # Batch runners, baselines, and public artifacts
-│   └── generated_algorithms/        # 48 generated EvoX implementations
+│   └── generated_algorithms/        # 48 generated tensorized EvoX algorithms
 ├── evaluation/                      # Reliability, fidelity, and scaling benchmarks
 ├── docs/images/                     # EvoX brand assets used by this README
 ├── requirements.txt
