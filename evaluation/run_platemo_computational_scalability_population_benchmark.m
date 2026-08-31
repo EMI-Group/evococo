@@ -125,7 +125,6 @@ for algidx = 1:length(algorithm_names)
         N = pop_sizes(pidx);
         maxFE = N * generations;
 
-        % 断点续跑检查
         skip = false;
         if exist(csv_file, 'file')
             fid = fopen(csv_file, 'r');

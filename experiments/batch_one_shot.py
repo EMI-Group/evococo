@@ -5,7 +5,9 @@ import asyncio
 from dotenv import load_dotenv
 
 # 1. Load dotenv and export Litellm configuration as OpenAI env vars BEFORE importing one_shot
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+dotenv_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
+)
 load_dotenv(dotenv_path)
 
 if not os.getenv("OPENAI_API_KEY"):
@@ -22,7 +24,8 @@ if not os.getenv("OPENAI_MODEL"):
 # Ensure experiments directory is in path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from one_shot import one_shot_translate, MODEL_NAME
+from one_shot import MODEL_NAME, one_shot_translate  # noqa: E402
+
 
 async def worker(sem, m_file, run_idx, input_dir, output_dir, stats):
     async with sem:
@@ -30,43 +33,70 @@ async def worker(sem, m_file, run_idx, input_dir, output_dir, stats):
         algo_name = os.path.splitext(m_file)[0]
         out_name = f"{algo_name}_run{run_idx}.py"
         out_path = os.path.join(output_dir, out_name)
-        
+
         if os.path.exists(out_path):
             print(f"[Skipped] {out_name} already exists.")
             stats["skipped"] += 1
             return
 
         print(f"[Generating] {algo_name} Run {run_idx}...")
-        
+
         with open(file_path, "r", encoding="utf-8") as file_obj:
             matlab_code = file_obj.read()
-            
+
         for attempt in range(5):
             try:
                 python_code = await one_shot_translate(matlab_code)
                 if python_code and "class" in python_code:
                     with open(out_path, "w", encoding="utf-8") as f:
                         f.write(python_code)
-                    print(f"[Success] {out_name} saved on attempt {attempt+1}.")
+                    print(f"[Success] {out_name} saved on attempt {attempt + 1}.")
                     stats["success"] += 1
                     return
                 else:
-                    print(f"[Warning] {out_name} attempt {attempt+1} got empty or invalid response.")
+                    print(
+                        f"[Warning] {out_name} attempt {attempt + 1} got empty or invalid response."
+                    )
             except Exception as e:
-                print(f"[Error] {out_name} attempt {attempt+1} failed with exception: {e}")
+                print(
+                    f"[Error] {out_name} attempt {attempt + 1} failed with exception: {e}"
+                )
             sleep_time = (attempt + 1) * 15
             print(f"Waiting {sleep_time}s before retry...")
             await asyncio.sleep(sleep_time)
-            
+
         print(f"[Fatal] {out_name} failed after all attempts.")
         stats["failed"] += 1
 
+
 async def main():
-    parser = argparse.ArgumentParser(description="Batch One-Shot MATLAB to Python Translation Baseline")
-    parser.add_argument("--input_dir", type=str, default="experiments/all_matlab_algorithms", help="Directory containing MATLAB files")
-    parser.add_argument("--output_dir", type=str, default="experiments/baseline-48", help="Directory to save generated Python files")
-    parser.add_argument("--repeats", type=int, default=5, help="Number of times to run translation for each algorithm")
-    parser.add_argument("--concurrency", type=int, default=5, help="Maximum number of concurrent translations")
+    parser = argparse.ArgumentParser(
+        description="Batch One-Shot MATLAB to Python Translation Baseline"
+    )
+    parser.add_argument(
+        "--input_dir",
+        type=str,
+        default="experiments/all_matlab_algorithms",
+        help="Directory containing MATLAB files",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="experiments/baseline-48",
+        help="Directory to save generated Python files",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="Number of times to run translation for each algorithm",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=5,
+        help="Maximum number of concurrent translations",
+    )
     args = parser.parse_args()
 
     input_dir = args.input_dir
@@ -81,7 +111,15 @@ async def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # Gather all algorithm files
-    m_files = sorted([f for f in os.listdir(input_dir) if f.endswith('.txt') and f not in ["analysis.txt", "dryrun_output.txt", "references_and_copyrights.md"]])
+    m_files = sorted(
+        [
+            f
+            for f in os.listdir(input_dir)
+            if f.endswith(".txt")
+            and f
+            not in ["analysis.txt", "dryrun_output.txt", "references_and_copyrights.md"]
+        ]
+    )
 
     if not m_files:
         print(f"No algorithms found in {input_dir}.")
@@ -114,6 +152,7 @@ async def main():
     print(f" Skipped: {stats['skipped']}")
     print(f" Failed:  {stats['failed']}")
     print("=======================================")
+
 
 if __name__ == "__main__":
     if sys.platform == "win32":

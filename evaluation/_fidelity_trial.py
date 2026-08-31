@@ -78,7 +78,9 @@ def main() -> None:
     from evox.workflows import StdWorkflow
 
     if args.device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA was requested, but it is not available in this process")
+        raise RuntimeError(
+            "CUDA was requested, but it is not available in this process"
+        )
 
     torch.set_default_device(args.device)
     torch.manual_seed(args.seed)

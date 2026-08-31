@@ -125,7 +125,6 @@ for algidx = 1:length(algorithm_names)
     for didx = 1:length(dim_sizes)
         D = dim_sizes(didx);
 
-        % 断点续跑检查
         skip = false;
         if exist(csv_file, 'file')
             fid = fopen(csv_file, 'r');

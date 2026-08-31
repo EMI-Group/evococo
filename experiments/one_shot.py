@@ -8,7 +8,9 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
 # Automatically locate the .env file in the project root directory
-dotenv_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+dotenv_path = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
+)
 load_dotenv(dotenv_path)
 
 # Import backend configuration dynamically
@@ -215,6 +217,7 @@ if __name__ == "__main__":
     print(f"Execution time for Gen 2-50 (49 steps): {exec_time:.4f}s (Avg: {exec_time / 49:.4f}s/gen)")
 """
 
+
 async def one_shot_translate_with_metrics(matlab_code: str) -> tuple[str, dict]:
     """Translate one algorithm and retain the provider's complete usage counters."""
     start_time = time.perf_counter()
@@ -222,7 +225,7 @@ async def one_shot_translate_with_metrics(matlab_code: str) -> tuple[str, dict]:
         prompt = SYSTEM_PROMPT_ONESHOT.format(
             GLOBAL_SPEC=GLOBAL_SPEC_TEXT,
             NSGA2_MATLAB=NSGA2_MATLAB_TEXT,
-            NSGA2_PYTHON=NSGA2_PYTHON_TEXT
+            NSGA2_PYTHON=NSGA2_PYTHON_TEXT,
         )
 
         kwargs_api = {}
@@ -242,8 +245,8 @@ async def one_shot_translate_with_metrics(matlab_code: str) -> tuple[str, dict]:
             model=MODEL_NAME,
             messages=[
                 {
-                    "role": "user", 
-                    "content": f"{prompt}\n\nYou are given the following MATLAB algorithm:\n\n{matlab_code}\n\nTranslate the algorithm into PyTorch/EvoX! Name your optimized class <YourAlgoName> (replace in class definition and the verification block). Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is functional. Just output the new model code, including the imports, class, helper functions, and the FIXED DEMO BLOCK at the end!"
+                    "role": "user",
+                    "content": f"{prompt}\n\nYou are given the following MATLAB algorithm:\n\n{matlab_code}\n\nTranslate the algorithm into PyTorch/EvoX! Name your optimized class <YourAlgoName> (replace in class definition and the verification block). Output the new code in codeblocks. Please generate real code, NOT pseudocode, make sure the code compiles and is functional. Just output the new model code, including the imports, class, helper functions, and the FIXED DEMO BLOCK at the end!",
                 }
             ],
             temperature=0.0,
@@ -254,7 +257,7 @@ async def one_shot_translate_with_metrics(matlab_code: str) -> tuple[str, dict]:
 
         message = response.choices[0].message
         content = message.content or ""
-        
+
         # Clean up any accidentally generated markdown code block tags
         content = re.sub(r"^```[a-zA-Z]*\s*\n", "", content)
         content = re.sub(r"\n```\s*$", "", content)
@@ -306,10 +309,21 @@ async def one_shot_translate(matlab_code: str) -> str:
     content, _ = await one_shot_translate_with_metrics(matlab_code)
     return content
 
+
 async def main():
-    parser = argparse.ArgumentParser(description="One-shot MATLAB to Python Translation Baseline")
-    parser.add_argument("--input", "-i", type=str, required=True, help="Path to input MATLAB file")
-    parser.add_argument("--output", "-o", type=str, default="experiments/baselines/one_shot_output.py", help="Path to save output Python file")
+    parser = argparse.ArgumentParser(
+        description="One-shot MATLAB to Python Translation Baseline"
+    )
+    parser.add_argument(
+        "--input", "-i", type=str, required=True, help="Path to input MATLAB file"
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        default="experiments/baselines/one_shot_output.py",
+        help="Path to save output Python file",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -320,7 +334,7 @@ async def main():
     if os.path.isdir(args.input):
         for root, _, files in os.walk(args.input):
             for file in sorted(files):
-                if file.endswith('.m') or file.endswith('.txt'):
+                if file.endswith(".m") or file.endswith(".txt"):
                     fpath = os.path.join(root, file)
                     with open(fpath, "r", encoding="utf-8") as f:
                         matlab_code += f"\n\n--- {file} ---\n{f.read()}"
@@ -341,13 +355,14 @@ async def main():
         out_dir = os.path.dirname(args.output)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
-            
+
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(python_code)
-        
+
         print(f"[Success] Translation saved to {args.output}")
     else:
         print("[Failed] Did not get code from LLM.")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
