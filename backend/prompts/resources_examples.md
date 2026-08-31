@@ -49,7 +49,9 @@ class NSGA2(Algorithm):
 
     def init_step(self):
         self.fit = self.evaluate(self.pop)
-        _, _, self.rank, self.dis = nd_environmental_selection(self.pop, self.fit, self.pop_size)
+        _, _, self.rank, self.dis, _ = nd_environmental_selection(
+            self.pop, self.fit, self.pop_size
+        )
 
     def step(self):
         # 1. Selection & Mating
@@ -67,7 +69,9 @@ class NSGA2(Algorithm):
         merge_pop = torch.cat([self.pop, offspring], dim=0)
         merge_fit = torch.cat([self.fit, off_fit], dim=0)
 
-        self.pop, self.fit, self.rank, self.dis = nd_environmental_selection(merge_pop, merge_fit, self.pop_size)
+        self.pop, self.fit, self.rank, self.dis, _ = nd_environmental_selection(
+            merge_pop, merge_fit, self.pop_size
+        )
 
 
 # [Example 2: RVEA (Decomposition/Reference-based)]

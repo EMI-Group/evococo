@@ -1,17 +1,17 @@
 import os
+import asyncio
 import json
 import re
-from dotenv import load_dotenv
+import time
+from functools import lru_cache
+
+import httpx
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from .config import REASONING_EFFORT, LLM_PROVIDERS
+from .config import ACTIVE_LLM_PROVIDER, LLM_PROVIDERS, REASONING_EFFORT
 
-# 1. Load environment variables
-load_dotenv()
-
-# 2. Configuration
-ACTIVE_PROVIDER = os.getenv("ACTIVE_LLM_PROVIDER", "litellm")
+ACTIVE_PROVIDER = ACTIVE_LLM_PROVIDER
 if ACTIVE_PROVIDER not in LLM_PROVIDERS:
     raise ValueError(f"Unknown LLM provider: {ACTIVE_PROVIDER}")
 
@@ -21,16 +21,50 @@ API_KEY = os.getenv(provider_config["api_key_env"])
 BASE_URL = provider_config["base_url"]
 MODEL_NAME = provider_config["model"]
 TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
-
-# 3. Initialize OpenAI Async Client
-client = AsyncOpenAI(
-    api_key=API_KEY, 
-    base_url=BASE_URL,
-    timeout=120.0,
-    max_retries=3
-)
+LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", 15.0))
+LLM_READ_TIMEOUT = float(os.getenv("LLM_READ_TIMEOUT", 600.0))
+LLM_NETWORK_RETRY_INTERVAL = float(os.getenv("LLM_NETWORK_RETRY_INTERVAL", 15.0))
 
 PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+
+
+@lru_cache(maxsize=1)
+def _get_client() -> AsyncOpenAI:
+    if not API_KEY or API_KEY.startswith("your_"):
+        key_name = provider_config["api_key_env"]
+        raise ValueError(
+            f"Missing API key for provider '{ACTIVE_PROVIDER}'. Set {key_name} in .env."
+        )
+    return AsyncOpenAI(
+        api_key=API_KEY,
+        base_url=BASE_URL,
+        timeout=httpx.Timeout(LLM_READ_TIMEOUT, connect=LLM_CONNECT_TIMEOUT),
+        max_retries=10,
+    )
+
+
+async def _wait_for_provider_network():
+    """Pause DeepSeek calls while the provider endpoint is unreachable."""
+    if not ACTIVE_PROVIDER.startswith("deepseek"):
+        return
+
+    attempt = 0
+    while True:
+        try:
+            timeout = httpx.Timeout(10.0, connect=5.0)
+            async with httpx.AsyncClient(timeout=timeout) as probe:
+                await probe.get(BASE_URL)
+            if attempt:
+                print(">>> [NETWORK] DeepSeek endpoint reachable; resuming LLM call.")
+            return
+        except httpx.TransportError as exc:
+            attempt += 1
+            if attempt == 1 or attempt % 4 == 0:
+                print(
+                    f">>> [NETWORK] DeepSeek endpoint unavailable ({exc}); "
+                    f"retrying in {LLM_NETWORK_RETRY_INTERVAL:.0f}s."
+                )
+            await asyncio.sleep(LLM_NETWORK_RETRY_INTERVAL)
 
 
 def _load_prompt(filename, **kwargs):
@@ -56,7 +90,10 @@ def _load_prompt(filename, **kwargs):
 
 
 async def generate_llm_response(
-    prompt_filename: str, response_model: type[BaseModel] = None, **kwargs
+    prompt_filename: str,
+    response_model: type[BaseModel] = None,
+    metrics_out: dict = None,
+    **kwargs,
 ):
     """
     Generates text response via the OpenAI-compatible API.
@@ -64,6 +101,7 @@ async def generate_llm_response(
     Args:
         prompt_filename (str): Filename in the prompts/ directory (e.g., "1_analyst.md")
         response_model (type[BaseModel], optional): Pydantic model to enforce and parse structured output.
+        metrics_out (dict, optional): Dict to record token usage and latency metrics.
         **kwargs: Variables to inject into the prompt (e.g., matlab_code, analyst_report)
     """
     try:
@@ -71,21 +109,37 @@ async def generate_llm_response(
         prompt_content = _load_prompt(prompt_filename, **kwargs)
 
         # B. Call API
-        # print(f">>> [DEBUG] Sending prompt: {prompt_filename} (Length: {len(prompt_content)})")
-
         kwargs_api = {}
         if response_model:
             # We enforce JSON object returned to assist Pydantic structure mapping
             kwargs_api["response_format"] = {"type": "json_object"}
+        if REASONING_EFFORT:
+            kwargs_api["extra_body"] = {"reasoning_effort": REASONING_EFFORT}
 
-        response = await client.chat.completions.create(
+        await _wait_for_provider_network()
+        start_time = time.perf_counter()
+        response = await _get_client().chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt_content}],
             temperature=TEMPERATURE,
             stream=False,
-            extra_body={"reasoning_effort": REASONING_EFFORT},
             **kwargs_api,
         )
+        latency = time.perf_counter() - start_time
+
+        # Extract usage metrics
+        usage = getattr(response, "usage", None)
+        if metrics_out is not None:
+            metrics_out["prompt_tokens"] = (
+                getattr(usage, "prompt_tokens", 0) if usage else 0
+            )
+            metrics_out["completion_tokens"] = (
+                getattr(usage, "completion_tokens", 0) if usage else 0
+            )
+            metrics_out["total_tokens"] = (
+                getattr(usage, "total_tokens", 0) if usage else 0
+            )
+            metrics_out["latency"] = latency
 
         # C. Clean Response
         content = response.choices[0].message.content

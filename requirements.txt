@@ -4,6 +4,10 @@ python-dotenv
 google-generativeai
 websockets
 watchfiles
-torch
-evox
+torch>=2.9.1
+evox>=1.3.0
+evomo>=0.2.2
 openai
+httpx
+pydantic
+ruff>=0.14.10

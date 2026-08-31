@@ -1,5 +1,5 @@
 {
-  "version": "1.5",
+  "version": "1.6",
   "rules": [
     {
       "id": "Bug #1 (Integer Sentinel)",
@@ -94,18 +94,20 @@
     },
     {
       "id": "Bug #9 (Efficient Peeling)",
-      "description": "For iterative front sorting, use a deadlock breaker and calculate metrics inside the loop.",
+      "description": "Non-domination ranks are zero-based. For iterative front sorting, use a deadlock breaker and calculate metrics inside the loop.",
       "action": "must",
       "keywords": [
         "nsga",
         "dominance",
         "front",
+        "rank",
+        "non_dominate_rank",
         "sort",
         "peeling",
         "deadlock"
       ],
       "always_apply": true,
-      "instruction": "1. Deadlock Breaker: if `num_in_front==0`, force select all remaining individuals (do NOT break). 2. EFFICIENCY: Calculate row-dependent metrics (like Crowding Distance) INSIDE the while loop immediately. Do NOT iterate fronts again in a second loop."
+      "instruction": "1. RANK SEMANTICS: `non_dominate_rank` is zero-based; rank `0` is the first Pareto front. Never use `rank == 1` to select the first front. 2. Deadlock Breaker: if `num_in_front==0`, force select all remaining individuals (do NOT break). 3. EFFICIENCY: Calculate row-dependent metrics (like Crowding Distance) INSIDE the while loop immediately. Do NOT iterate fronts again in a second loop."
     },
     {
       "id": "Bug #10 (MATLAB Dim Mapping)",

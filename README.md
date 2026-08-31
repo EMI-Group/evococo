@@ -1,97 +1,246 @@
-# EvoCoCo
+<h1 align="center">
+  <a href="https://github.com/EMI-Group/evox">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/images/evox_brand_light.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/images/evox_brand_dark.svg">
+      <img alt="EvoX Logo" height="128" width="500" src="docs/images/evox_brand_dark.svg">
+    </picture>
+  </a>
+</h1>
 
-EvoCoCo is a lightweight local application with a **FastAPI backend** and a **browser-based frontend**.
-The backend provides API services, while the frontend interacts with it through a simple web interface.
+<h2 align="center">
+  🌟 EvoCoCo: A Multi-Agent Framework for Semantics-Guided Automatic Tensorization 🌟
+</h2>
+
+<div align="center">
+  <a href="https://arxiv.org/abs/XXXX.XXXXX">
+    <img src="https://img.shields.io/badge/EvoCoCo%20paper-arXiv-red?style=for-the-badge" alt="EvoCoCo Paper on arXiv">
+  </a>
+</div>
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Key Features](#key-features)
+3. [Installation](#installation)
+4. [Configuration](#configuration)
+5. [Quick Start](#quick-start)
+6. [Experiments and Benchmarking](#experiments-and-benchmarking)
+7. [Project Structure](#project-structure)
+8. [Community and Support](#community-and-support)
+9. [License](#license)
+
+## Overview
+
+EvoCoCo is a multi-agent framework for automatically tensorizing evolutionary multiobjective
+optimization (EMO) software. Rather than treating tensorization as syntax-to-syntax translation,
+EvoCoCo formulates it as **semantics-guided computational restructuring**: the concrete MATLAB
+implementation is the transformation object, while the underlying optimization mechanism is the
+semantic constraint that the generated program must preserve.
+
+Built on [EvoX](https://github.com/EMI-Group/evox), EvoCoCo coordinates semantic analysis,
+contextual rule retrieval, transformation planning, diversified tensor restructuring, static and
+runtime repair, and candidate selection through shared intermediate representations and
+closed-loop execution feedback.
+
+The system can be used through a browser interface or as a batch experiment runner. This
+repository includes 48 EvoCoCo-generated tensorized algorithms used in the accompanying
+experiments. The same algorithms are also integrated into
+[EvoMO](https://github.com/EMI-Group/evomo).
+
+## Key Features
+
+### 🧭 Semantics-Guided Restructuring
+
+- Treats the source implementation as the transformation object and the underlying optimization
+  mechanism as the semantic constraint.
+- Reconstructs algorithm states, operators, dependencies, and control flow before tensorization.
+
+### 🤝 Multi-Agent Tensorization
+
+- Coordinates semantic analysis, contextual rule retrieval, transformation planning,
+  restructuring, repair, and selection through shared intermediate representations.
+- Explores six blueprint-guided computational restructuring strategies under the same semantic
+  constraints.
+
+### ⚡ High-Performance Generated Algorithms
+
+- Produces GPU-oriented PyTorch/EvoX implementations using broadcasting, `einsum`, masked
+  operations, advanced tensor operators, and JIT-oriented restructuring.
+- Achieves speedups of up to **10,000×** for generated tensorized algorithms in the reported
+  experiments.
+
+### 🧪 Closed-Loop Validation and Benchmarking
+
+- Combines Ruff checks, runtime execution, optimization feedback, repair, and candidate selection.
+- Includes 48 MOEAs for evaluating migration reliability, optimization fidelity, computational
+  scalability, external transfer, and component contributions.
+
+## Installation
+
+Clone the repository and install its Python dependencies:
+
+```bash
+git clone https://github.com/EMI-Group/evococo.git
+cd evococo
+python -m pip install -r requirements.txt
+```
+
+### Coding-agent installation
+
+Give the following instruction to a coding agent with terminal access:
+
+```text
+Install and validate this EvoCoCo repository:
+python -m pip install -r requirements.txt
+python -m compileall -q backend evaluation experiments
+python evaluation/run_migration_reliability_benchmark.py --help
+
+Report the Python, PyTorch, EvoX, and EvoMO versions, CUDA availability, and validation results.
+Do not call LLM APIs or run translation experiments during installation.
+```
+
+A CUDA-capable GPU is recommended for generated-algorithm evaluation. The single-run DTLZ
+evaluator can also select CPU automatically, although GPU execution is the primary target of the
+tensorized implementations.
 
 ## Configuration
 
-Before running the application, you need to configure your LLM providers. Create a `.env` file in the project root directory with the following format:
+Copy the example configuration before starting EvoCoCo:
+
+```bash
+cp .env.example .env
+```
+
+The following example uses Gemini:
 
 ```env
-# --- LLM Provider Selection ---
-# Switch this to 'zhipu', 'deepseek-v4-pro', 'gemini', or 'custom'
-ACTIVE_LLM_PROVIDER=zhipu
-
-# --- Global LLM Settings ---
-OPENAI_TEMPERATURE=0.2
-
-# --- API Keys ---
-ZHIPU_API_KEY=your_zhipu_api_key_here
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
+ACTIVE_LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_api_key_here
-CUSTOM_API_KEY=your_custom_api_key_here
 ```
 
-To switch models, simply change the `ACTIVE_LLM_PROVIDER` value.
+Available provider names are `zhipu`, `deepseek-v4-pro`, `deepseek-v4-flash`, `gemini`, and
+`custom`. Optional base URL and model overrides are documented in
+[`.env.example`](.env.example).
 
-> [!TIP]
-> It is highly recommended to use the `gemini-3-flash-preview` model under the `gemini` provider (set `ACTIVE_LLM_PROVIDER=gemini` in `.env`). This model performs exceptionally well in code translation and generation tasks while offering outstanding cost efficiency.
+> [!IMPORTANT]
+> Never commit `.env` or expose provider API keys in generated artifacts and logs.
 
-## Running the Backend
+## Quick Start
 
-Start the backend server from the project root directory:
+### Start the backend
 
-```
+From the project root, run:
+
+```bash
 python -m uvicorn backend.main:app --reload --reload-dir backend --port 8000
 ```
 
-### Arguments
+The backend health endpoint will be available at <http://localhost:8000>.
 
-* `backend.main:app` — FastAPI application entry point
-* `--reload` — Enables auto-reload when code changes
-* `--reload-dir backend` — Watches the `backend` directory for updates
-* `--port 8000` — Runs the server on port `8000`
+### Open the frontend
 
-After starting successfully, the backend API will be available at:
+Open [`frontend/index.html`](frontend/index.html) in a browser. The frontend connects to the local
+backend over WebSocket, displays every pipeline stage, and returns the selected Python
+implementation when the tournament finishes.
 
-```
-http://localhost:8000
-```
+> [!TIP]
+> Keep the backend terminal open while using the browser interface so progress and error messages
+> remain visible.
 
-## Opening the Frontend
+> [!NOTE]
+> Validation executes generated Python code; use trusted inputs and run EvoCoCo locally or in an
+> isolated environment.
 
-Once the backend is running, open the frontend page in your browser:
+## Experiments and Benchmarking
 
-```
-frontend/index.html
-```
+### Batch translation
 
-You can open it by:
-
-* Double-clicking `index.html`
-* Dragging the file into a browser
-* Opening the file path directly in a browser
-
-Example:
-
-```
-file:///path/to/project/frontend/index.html
-```
-
-The frontend will automatically communicate with the backend running at:
-
-```
-http://localhost:8000
-```
-
-
-## Running Experiments
-
-To run batch translations for MATLAB algorithms to Python, place your `.m`/`.txt` files or **algorithm folders containing multiple `.m` files** in `experiments/matlab_code` and run using the `tensor` conda environment:
+Create an input directory containing `.m` or `.txt` files. A subdirectory containing multiple
+MATLAB source files is treated as one algorithm:
 
 ```bash
-conda run -n tensor python experiments/batch_translate.py --input_dir ./experiments/matlab_code --output_dir ./experiments/benchmark_results --repeats 2
+mkdir -p experiments/matlab_code
+python experiments/batch_translate.py \
+  --input_dir experiments/matlab_code \
+  --output_dir experiments/benchmark_results \
+  --repeats 1 \
+  --repeat-concurrency 1
 ```
 
-> **Tip:** You can adjust the `--repeats 2` argument to control how many translation attempts are run per algorithm.
+Each pipeline run starts six candidate branches and can consume multiple LLM requests. Begin with
+one repeat and one concurrent run when validating a new provider configuration.
 
-To evaluate the generated Python files (results are saved in `experiments/benchmark_results` by default):
+### Evaluation benchmarks
+
+Validate syntax, execution, and convergence of the 48 selected implementations:
 
 ```bash
-python evaluation/benchmark.py --dir ./experiments/benchmark_results
+python evaluation/run_migration_reliability_benchmark.py \
+  --dir experiments/generated_algorithms \
+  --workers 1
 ```
 
-## Notes
+Run the optimization-fidelity benchmark on a selected suite:
 
-* The backend **must be running before opening the frontend**.
-* If the backend is not started, frontend API requests will fail.
+```bash
+python evaluation/run_optimization_fidelity_benchmark.py \
+  --algorithm-dir experiments/generated_algorithms \
+  --suite DTLZ \
+  --runs 21 \
+  --gpu 0
+```
+
+Run computational scaling with `torch.compile`:
+
+```bash
+python evaluation/run_computational_scalability_benchmark.py \
+  --algorithm-dir experiments/generated_algorithms \
+  --scaling population \
+  --gpu 0
+```
+
+All benchmark runs are resumable. PlatEMO reference generation, the DTLZ/WFG/LSMOP/MaF options,
+dimension scaling, speedup calculation, output fields, and smoke tests are documented in
+[`evaluation/README.md`](evaluation/README.md).
+
+## Project Structure
+
+```text
+evococo/
+├── backend/                         # FastAPI service and seven-stage tournament engine
+│   ├── database/                    # Retrieval rules for common translation failures
+│   └── prompts/                     # Agent roles, specifications, and EvoX resources
+├── frontend/                        # Browser-based interactive interface
+├── experiments/                     # Batch runners, baselines, and public artifacts
+│   └── generated_algorithms/        # 48 generated tensorized EvoX algorithms
+├── evaluation/                      # Reliability, fidelity, and scaling benchmarks
+├── docs/images/                     # EvoX brand assets used by this README
+├── requirements.txt
+└── README.md
+```
+
+<!--
+## Citing EvoCoCo
+
+If you use EvoCoCo in your research, please cite the following paper. Add the publication metadata
+when it is finalized.
+
+```bibtex
+@article{evococo,
+  title   = {Semantics-Guided Automatic Tensorization for Evolutionary Multiobjective Optimization: A Multi-Agent Framework},
+  author  = {Liang, Zhenyu and Huang, Beichen and Zheng, Bowen and Cheng, Ran},
+  year    = {2026}
+}
+```
+-->
+
+## Community and Support
+
+Questions, bug reports, and feature requests are welcome through
+[GitHub Issues](https://github.com/EMI-Group/evococo/issues). For EvoX framework questions, see the
+[EvoX repository](https://github.com/EMI-Group/evox).
+
+## License
+
+EvoCoCo is released under the [GNU General Public License v3.0](LICENSE).

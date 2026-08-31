@@ -24,7 +24,7 @@ app.add_middleware(
 
 @app.get("/")
 def read_root():
-    return {"status": "EvoCoder Backend is Running"}
+    return {"status": "EvoCoCo Backend is Running"}
 
 
 @app.websocket("/ws")

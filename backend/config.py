@@ -1,5 +1,5 @@
 """
-Global Configuration for EvoCoder
+Global Configuration for EvoCoCo
 """
 
 import os
@@ -21,34 +21,48 @@ if not os.path.exists(ENV_PATH) and os.path.exists(ENV_EXAMPLE_PATH):
 load_dotenv(ENV_PATH)
 
 # --- Tournament Engine Settings ---
-NUM_BRANCHES = 6
+try:
+    NUM_BRANCHES = int(os.getenv("NUM_BRANCHES", "6"))
+except ValueError as exc:
+    raise ValueError("NUM_BRANCHES must be an integer") from exc
+if NUM_BRANCHES < 1:
+    raise ValueError("NUM_BRANCHES must be at least 1")
 
 # --- LLM Generation Settings ---
-# Reasoning effort for supported models (e.g., o1/o3-mini).
-# Standard Options: "low", "medium", "high"
-# Special Option: "minimal" (Exclusive to Gemini 3 Flash models via LiteLLM for absolute minimum thinking)
-REASONING_EFFORT = "minimal"
+ACTIVE_LLM_PROVIDER = os.getenv("ACTIVE_LLM_PROVIDER", "gemini")
+_default_reasoning_effort = "minimal" if ACTIVE_LLM_PROVIDER == "gemini" else "low"
+REASONING_EFFORT = os.getenv("REASONING_EFFORT", _default_reasoning_effort).strip()
 LLM_PROVIDERS = {
     "zhipu": {
-        "base_url": os.getenv("ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"),
+        "base_url": os.getenv(
+            "ZHIPU_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/"
+        ),
         "model": os.getenv("ZHIPU_MODEL", "GLM-5.1"),
-        "api_key_env": "ZHIPU_API_KEY"
+        "api_key_env": "ZHIPU_API_KEY",
     },
     "deepseek-v4-pro": {
         "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         "model": os.getenv("DEEPSEEK_MODEL_PRO", "deepseek-v4-pro"),
-        "api_key_env": "DEEPSEEK_API_KEY"
+        "api_key_env": "DEEPSEEK_API_KEY",
+    },
+    "deepseek-v4-flash": {
+        "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        "model": os.getenv("DEEPSEEK_MODEL_FLASH", "deepseek-v4-flash"),
+        "api_key_env": "DEEPSEEK_API_KEY",
     },
     "gemini": {
-        "base_url": os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/"),
+        "base_url": os.getenv(
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta/openai/",
+        ),
         "model": os.getenv("GEMINI_MODEL", "gemini-3-flash-preview"),
-        "api_key_env": "GEMINI_API_KEY"
+        "api_key_env": "GEMINI_API_KEY",
     },
     "custom": {
         "base_url": os.getenv("CUSTOM_BASE_URL", "http://localhost:4000/v1"),
         "model": os.getenv("CUSTOM_MODEL", "custom-model"),
-        "api_key_env": "CUSTOM_API_KEY"
-    }
+        "api_key_env": "CUSTOM_API_KEY",
+    },
 }
 # Tensorization strategies to inject for each branch
 STRATEGIES_SHORT = [
