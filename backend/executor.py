@@ -27,10 +27,7 @@ def setup_workspace(session_id: str) -> str:
 
 
 def cleanup_workspace(session_id: str):
-    """
-    Clean up workspace directory
-    [Modified] Retains up to 50 global debug records to prevent disk bombs.
-    """
+    """Retain the workspace and remove entries beyond the configured limit."""
     workspace_path = os.path.join(BASE_WORKSPACE_DIR, session_id)
     if os.path.exists(workspace_path):
         try:
@@ -106,13 +103,13 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=workspace,
-                timeout=5
+                timeout=5,
             )
 
         try:
             result = await asyncio.to_thread(run_ruff)
-            stdout_str = result.stdout.decode(errors='replace') if result.stdout else ""
-            stderr_str = result.stderr.decode(errors='replace') if result.stderr else ""
+            stdout_str = result.stdout.decode(errors="replace") if result.stdout else ""
+            stderr_str = result.stderr.decode(errors="replace") if result.stderr else ""
             returncode = result.returncode
         except subprocess.TimeoutExpired:
             return False, "System Error: Ruff check timed out."
@@ -123,9 +120,7 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
             raw_output = stdout_str + "\n" + stderr_str
             clean_error = raw_output.replace(file_path, "script.py").strip()
             if not clean_error:
-                clean_error = (
-                    f"Ruff failed (Exit Code: {returncode}), check install."
-                )
+                clean_error = f"Ruff failed (Exit Code: {returncode}), check install."
             return False, clean_error
 
     except Exception as e:
@@ -138,10 +133,7 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
 async def execute_code(
     code_str: str, session_id: str = None, filename="algo_script.py"
 ):
-    """
-    Base execution function: run code and return output
-    [Modified] Force CPU execution to prevent parallel freeze
-    """
+    """Run generated code in an isolated workspace and return its output."""
     if not session_id:
         session_id = f"exec_{str(uuid.uuid4())[:8]}"
 
@@ -155,27 +147,21 @@ async def execute_code(
     except Exception as e:
         return False, "", f"System Error: Failed to write file - {str(e)}"
 
-    # === [Key modification] Force CPU mode ===
-    # env = os.environ.copy()
-    # env["CUDA_VISIBLE_DEVICES"] = ""  # Hide GPU, PyTorch fallback to CPU
-    # env["OMP_NUM_THREADS"] = "1"  # Limit CPU threads to prevent 100% usage
-    # env["MKL_NUM_THREADS"] = "1"
-    # ==============================
-
     try:
+
         def run_script():
             return subprocess.run(
                 [sys.executable, filename],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=workspace,
-                timeout=60
+                timeout=60,
             )
 
         try:
             result = await asyncio.to_thread(run_script)
-            stdout_str = result.stdout.decode(errors='replace') if result.stdout else ""
-            stderr_str = result.stderr.decode(errors='replace') if result.stderr else ""
+            stdout_str = result.stdout.decode(errors="replace") if result.stdout else ""
+            stderr_str = result.stderr.decode(errors="replace") if result.stderr else ""
             returncode = result.returncode
         except subprocess.TimeoutExpired:
             return (
@@ -205,7 +191,7 @@ def parse_igd_from_stdout(stdout: str) -> list[float]:
             else:
                 val = float(val_str)
             igds.append(val)
-        except:  # noqa: E722
+        except (TypeError, ValueError):
             continue
     return igds
 
@@ -216,7 +202,7 @@ def parse_exec_time_from_stdout(stdout: str) -> float:
     if match:
         try:
             return float(match.group(1))
-        except:
+        except (TypeError, ValueError):
             pass
     return -1.0
 
