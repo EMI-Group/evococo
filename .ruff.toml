@@ -1,0 +1,1 @@
+extend-exclude = ["experiments/generated_algorithms"]
