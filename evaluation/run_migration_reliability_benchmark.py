@@ -1,16 +1,25 @@
 """Evaluate migration reliability of generated EvoX algorithms."""
 
-import os
-import ast
-import re
 import argparse
+import ast
 import asyncio
 import json
+import os
+import re
+import sys
 import uuid
 
-# Add evocoder root to sys.path to allow importing backend
-import sys
+# Reconfigure the console to UTF-8 with replacement errors before importing
+# backend.executor: backend/config.py prints a warning emoji at import time,
+# which would raise UnicodeEncodeError on GBK Windows consoles and break even
+# "--help". Best-effort: runtimes without reconfigure() are left untouched.
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except (AttributeError, ValueError):
+    pass
 
+# Add evocoder root to sys.path to allow importing backend
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from backend.executor import check_syntax_with_ruff, execute_code_trial
@@ -60,6 +69,24 @@ if __name__ == '__main__':
 """
 
 
+def _read_text_file(path: str) -> str:
+    """Read a UTF-8 text file off the event loop (blocking I/O)."""
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _load_json_report(path: str) -> list[dict[str, object]]:
+    """Load a JSON report off the event loop (blocking I/O)."""
+    with open(path, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _write_json_report(path: str, results: list[dict[str, object]]) -> None:
+    """Persist the JSON report off the event loop (blocking I/O)."""
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(results, handle, indent=2)
+
+
 def test_syntax(code: str) -> bool:
     try:
         ast.parse(code)
@@ -86,10 +113,9 @@ async def main():
         parser.error("--workers must be at least 1")
 
     report_file = os.path.join(args.dir, "benchmark_report.json")
-    results = []
+    results: list[dict[str, object]] = []
     if os.path.exists(report_file):
-        with open(report_file, "r", encoding="utf-8") as f:
-            results = json.load(f)
+        results = await asyncio.to_thread(_load_json_report, report_file)
 
     processed_files = {r["file"] for r in results}
 
@@ -120,8 +146,7 @@ async def main():
 
         async with sem:
             path = os.path.join(args.dir, py_file)
-            with open(path, "r", encoding="utf-8") as f:
-                code = f.read()
+            code = await asyncio.to_thread(_read_text_file, path)
 
             # Metric 1: Syntax
             syntax_pass = test_syntax(code)
@@ -204,11 +229,10 @@ async def main():
                 igd_str = f"{final_igd:.4f}" if final_igd != float("inf") else "inf"
                 time_str = f"{exec_time:.2f}" if exec_time >= 0 else "N/A"
                 print(
-                    f"{py_file[:28]:<30} | {str(syntax_pass):<6} | {str(static_pass):<6} | {str(exec_pass):<6} | {str(optim_pass):<6} | {igd_str:<8} | {time_str}"
+                    f"{py_file[:28]:<30} | {syntax_pass!s:<6} | {static_pass!s:<6} | {exec_pass!s:<6} | {optim_pass!s:<6} | {igd_str:<8} | {time_str}"
                 )
 
-                with open(report_file, "w", encoding="utf-8") as f:
-                    json.dump(results, f, indent=2)
+                await asyncio.to_thread(_write_json_report, report_file, results)
 
     tasks = [evaluate_single_file(f) for f in py_files]
     await asyncio.gather(*tasks)
