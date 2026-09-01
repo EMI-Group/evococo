@@ -27,6 +27,7 @@ Batch runners and a one-shot baseline for translating MATLAB multi-objective evo
   - `batch_translate.py` `process_file`: a failed pipeline run is recorded as failed stats and the batch continues.
   - `one_shot.py` `one_shot_translate_with_metrics`: documented contract to never raise; returns error metrics instead.
 - `python -m ruff check experiments -g '!...'` is not supported by the installed ruff; use `--exclude 'experiments/generated_algorithms/**'` or rely on the root config.
+- On Chinese-Windows GBK consoles, the FIRST import of `backend.config` (via any runner) crashes with `UnicodeEncodeError` if `.env` doesn't exist yet: `backend/config.py` auto-creates `.env` from the template while printing a `⚠️` emoji that GBK can't encode. One-time issue — once `.env` exists the print is skipped. Workaround if needed: run with `PYTHONIOENCODING=utf-8`. (`backend/config.py` is outside this directory's scope.)
 
 ## Test Strategy
 - `python -m compileall -q experiments` (whole dir, includes generated artifacts).
