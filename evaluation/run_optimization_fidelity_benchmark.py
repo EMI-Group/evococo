@@ -5,22 +5,25 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import math
 import os
 import statistics
-import subprocess
 import sys
 from pathlib import Path
 
 from _benchmark_problems import ALL_PROBLEMS, PROBLEM_SUITES, suite_problems
+from _common import (
+    DEFAULT_FIDELITY_OUTPUT_DIR,
+    RESULT_PREFIX_FIDELITY,
+    append_row,
+    check_cuda,
+    discover_algorithms,
+    positive_int,
+    read_rows,
+    run_worker_process,
+)
 
-
-ROOT = Path(__file__).resolve().parents[1]
 WORKER = Path(__file__).with_name("_fidelity_trial.py")
-DEFAULT_ALGORITHM_DIR = ROOT / "experiments" / "generated_algorithms"
-DEFAULT_OUTPUT_DIR = ROOT / "evaluation_results" / "fidelity"
-RESULT_PREFIX = "EVOCOCO_FIDELITY_RESULT="
 RAW_FIELDS = (
     "algorithm",
     "algorithm_file",
@@ -58,13 +61,6 @@ SUMMARY_FIELDS = (
     "relative_igd_increase",
     "classification",
 )
-
-
-def positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("value must be at least 1")
-    return parsed
 
 
 def probability(value: str) -> float:
@@ -106,7 +102,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--timeout", type=positive_int, default=3600)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_FIDELITY_OUTPUT_DIR)
     parser.add_argument(
         "--reference-csv",
         type=Path,
@@ -133,78 +129,6 @@ def parse_args() -> argparse.Namespace:
                 f"{', '.join(outside_suite)}"
             )
     return args
-
-
-def discover_algorithms(args: argparse.Namespace) -> list[Path]:
-    if args.algorithm_file:
-        files = list(
-            dict.fromkeys(path.expanduser().resolve() for path in args.algorithm_file)
-        )
-    else:
-        directory = (args.algorithm_dir or DEFAULT_ALGORITHM_DIR).expanduser().resolve()
-        if not directory.is_dir():
-            raise ValueError(f"Algorithm directory does not exist: {directory}")
-        files = sorted(directory.glob("*.py"))
-
-    missing = [str(path) for path in files if not path.is_file()]
-    if missing:
-        raise ValueError(f"Algorithm file does not exist: {', '.join(missing)}")
-
-    if args.algorithms:
-        requested = set(args.algorithms)
-        files = [
-            path for path in files if path.stem in requested or path.name in requested
-        ]
-        found = {path.stem for path in files} | {path.name for path in files}
-        unmatched = sorted(name for name in requested if name not in found)
-        if unmatched:
-            raise ValueError(
-                f"Requested algorithms were not found: {', '.join(unmatched)}"
-            )
-
-    if not files:
-        raise ValueError("No Python algorithm files were selected")
-    return sorted(files, key=lambda path: path.name.casefold())
-
-
-def check_cuda(gpu: int) -> None:
-    env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu)}
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import torch; print(int(torch.cuda.is_available()), torch.cuda.device_count())",
-        ],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=30,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip().startswith("1 "):
-        detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(
-            f"GPU {gpu} is not available to this Python environment. {detail}"
-        )
-
-
-def read_rows(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
-
-
-def append_row(path: Path, row: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    exists = path.exists() and path.stat().st_size > 0
-    with path.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=RAW_FIELDS)
-        if not exists:
-            writer.writeheader()
-        writer.writerow({field: row.get(field, "") for field in RAW_FIELDS})
-        handle.flush()
-        os.fsync(handle.fileno())
 
 
 def trial_key(row: dict[str, str]) -> tuple[object, ...]:
@@ -297,31 +221,9 @@ def run_trial(
     env = dict(os.environ)
     if args.device == "cuda":
         env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=args.timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        return {"status": "timeout", "error": f"Exceeded {args.timeout}s: {error}"}
-
-    for line in reversed(completed.stdout.splitlines()):
-        if line.startswith(RESULT_PREFIX):
-            result = json.loads(line[len(RESULT_PREFIX) :])
-            result.update({"status": "success", "error": ""})
-            return result
-
-    detail = (completed.stderr or completed.stdout).strip()
-    if len(detail) > 1000:
-        detail = detail[-1000:]
-    return {
-        "status": "failed",
-        "error": f"Worker exited with code {completed.returncode}: {detail}",
-    }
+    return run_worker_process(
+        command, env=env, timeout=args.timeout, result_prefix=RESULT_PREFIX_FIDELITY
+    )
 
 
 def write_summary(
@@ -483,7 +385,7 @@ def main() -> int:
                         "error": "",
                         **result,
                     }
-                    append_row(raw_path, row)
+                    append_row(raw_path, row, RAW_FIELDS)
                     if row["status"] == "success":
                         print(
                             f"IGD={float(row['igd']):.6g}, "

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
+if TYPE_CHECKING:
+    import torch
 
 PROBLEM_SUITES: Final[dict[str, tuple[str, ...]]] = {
     "DTLZ": tuple(f"DTLZ{index}" for index in range(1, 8)),
@@ -51,7 +53,9 @@ def problem_suite(problem: str) -> str:
     raise ValueError(f"Unknown benchmark problem: {problem}")
 
 
-def create_problem(problem_name: str, objectives: int, device: str):
+def create_problem(
+    problem_name: str, objectives: int, device: str
+) -> tuple[object, int, torch.Tensor, torch.Tensor]:
     """Return ``(problem, dimension, lower_bound, upper_bound)``."""
     import torch
 

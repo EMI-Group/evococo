@@ -4,18 +4,23 @@ Global Configuration for EvoCoCo
 
 import os
 import shutil
+from pathlib import Path
+
 from dotenv import load_dotenv
 
 # --- Path Configurations (Pre-defined for env loading) ---
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
-ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
-ENV_EXAMPLE_PATH = os.path.join(PROJECT_ROOT, ".env.example")
+BACKEND_DIR = str(Path(__file__).resolve().parent)
+PROJECT_ROOT = str(Path(BACKEND_DIR).parent)
+ENV_PATH = str(Path(PROJECT_ROOT) / ".env")
+ENV_EXAMPLE_PATH = str(Path(PROJECT_ROOT) / ".env.example")
 
 # Auto-copy .env.example if .env doesn't exist
 if not os.path.exists(ENV_PATH) and os.path.exists(ENV_EXAMPLE_PATH):
     shutil.copy(ENV_EXAMPLE_PATH, ENV_PATH)
-    print(f"\n⚠️ Created {ENV_PATH} from template. Please update your API keys in it.\n")
+    try:
+        print(f"\n⚠️ Created {ENV_PATH} from template. Please update your API keys in it.\n")
+    except UnicodeEncodeError:
+        print(f"\n[WARNING] Created {ENV_PATH} from template. Please update your API keys in it.\n")
 
 # Load environment variables FIRST before setting config defaults
 load_dotenv(ENV_PATH)
@@ -100,9 +105,9 @@ IGNORE_RUFF_CODES = [
 MAX_RETAINED_WORKSPACES = 1000
 
 # --- Path Configurations ---
-BASE_WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "temp_workspace")
-HISTORY_DIR = os.path.join(PROJECT_ROOT, "run_history")
-PROMPTS_DIR = os.path.join(BACKEND_DIR, "prompts")
-DATABASE_DIR = os.path.join(BACKEND_DIR, "database")
-RULES_DB_PATH = os.path.join(DATABASE_DIR, "rag_db.json")
-GLOBAL_SPEC_PATH = os.path.join(PROMPTS_DIR, "0_global_spec.md")
+BASE_WORKSPACE_DIR = str(Path(PROJECT_ROOT) / "temp_workspace")
+HISTORY_DIR = str(Path(PROJECT_ROOT) / "run_history")
+PROMPTS_DIR = str(Path(BACKEND_DIR) / "prompts")
+DATABASE_DIR = str(Path(BACKEND_DIR) / "database")
+RULES_DB_PATH = str(Path(DATABASE_DIR) / "rag_db.json")
+GLOBAL_SPEC_PATH = str(Path(PROMPTS_DIR) / "0_global_spec.md")
