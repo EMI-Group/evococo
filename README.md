@@ -22,13 +22,16 @@
 
 1. [Overview](#overview)
 2. [Key Features](#key-features)
-3. [Installation](#installation)
-4. [Configuration](#configuration)
-5. [Quick Start](#quick-start)
-6. [Experiments and Benchmarking](#experiments-and-benchmarking)
-7. [Project Structure](#project-structure)
-8. [Community and Support](#community-and-support)
-9. [License](#license)
+3. [How It Works](#how-it-works)
+4. [Installation](#installation)
+5. [Configuration](#configuration)
+6. [Quick Start](#quick-start)
+7. [Experiments and Benchmarking](#experiments-and-benchmarking)
+8. [Development and Validation](#development-and-validation)
+9. [Project Structure](#project-structure)
+10. [Troubleshooting](#troubleshooting)
+11. [Community and Support](#community-and-support)
+12. [License](#license)
 
 ## Overview
 
@@ -47,6 +50,9 @@ The system can be used through a browser interface or as a batch experiment runn
 repository includes 48 EvoCoCo-generated tensorized algorithms used in the accompanying
 experiments. The same algorithms are also integrated into
 [EvoMO](https://github.com/EMI-Group/evomo).
+
+> 📄 See [`docs/TECHNICAL_REPORT.md`](docs/TECHNICAL_REPORT.md) for a detailed engineering report
+> on the repository architecture, recent code-quality pass, and validation gates.
 
 ## Key Features
 
@@ -75,6 +81,48 @@ experiments. The same algorithms are also integrated into
 - Combines Ruff checks, runtime execution, optimization feedback, repair, and candidate selection.
 - Includes 48 MOEAs for evaluating migration reliability, optimization fidelity, computational
   scalability, external transfer, and component contributions.
+
+## How It Works
+
+```
+                ┌────────────────────────────────────────────────────────────┐
+                │                    EvoCoCo Pipeline (backend)               │
+                │                                                             │
+  MATLAB/PlatEMO │  ┌──────────┐  ┌────────────┐  ┌───────────────┐           │
+  MOEA source ───┼─▶│  1. RAG  │─▶│ 2. Global │─▶│ 3. Planner    │           │
+  (input)        │  │  Retrieval│  │   Spec    │  │  (branch plan)│           │
+                │  └──────────┘  └────────────┘  └───────┬───────┘           │
+                │                                        │ six strategies    │
+                │                    ┌───────────────────▼────────────────┐  │
+                │                    │  4. Branch Generation (parallel)   │  │
+                │                    │   Broadcasting / einsum / masked / │  │
+                │                    │   in-place / advanced ops / JIT    │  │
+                │                    └───────┬───────────────┬───────────┘  │
+                │                            │               │              │
+                │                 ┌──────────▼───┐     ┌─────▼────────┐    │
+                │                 │ 5. Static    │     │ 6. Runtime   │    │
+                │                 │    Repair    │     │    Repair    │    │
+                │                 │   (Ruff)     │     │  (execution) │    │
+                │                 └───────┬──────┘     └─────┬────────┘    │
+                │                            │               │              │
+                │                            └───────┬───────┘              │
+                │                                    ▼                      │
+                │                         ┌──────────────────┐             │
+                │                         │ 7. Judge / Select│             │
+                │                         │ (tournament win) │             │
+                │                         └────────┬─────────┘             │
+                └──────────────────────────────────┼──────────────────────┘
+                                                   ▼
+                              ┌──────────────────────────────────┐
+                              │   Tensorized PyTorch/EvoX MOEA   │
+                              │   (validated, GPU-optimized)     │
+                              └──────────────────────────────────┘
+```
+
+Six candidate branches are generated per run, each guided by a different restructuring strategy
+(see `STRATEGIES_SHORT` in [`backend/config.py`](backend/config.py)). Every branch passes through
+static (Ruff) and runtime (execution) repair loops; the tournament judge selects the winner, and
+performance statistics are attached to the final output.
 
 ## Installation
 
@@ -142,7 +190,8 @@ The backend health endpoint will be available at <http://localhost:8000>.
 
 Open [`frontend/index.html`](frontend/index.html) in a browser. The frontend connects to the local
 backend over WebSocket, displays every pipeline stage, and returns the selected Python
-implementation when the tournament finishes.
+implementation when the tournament finishes. It is fully self-contained (no CDN dependencies) and
+works offline or from `file://`.
 
 > [!TIP]
 > Keep the backend terminal open while using the browser interface so progress and error messages
@@ -204,18 +253,66 @@ All benchmark runs are resumable. PlatEMO reference generation, the DTLZ/WFG/LSM
 dimension scaling, speedup calculation, output fields, and smoke tests are documented in
 [`evaluation/README.md`](evaluation/README.md).
 
+## Development and Validation
+
+The repository enforces a clean-code gate (no new lint findings, no syntax errors, working CLI
+entry points):
+
+```bash
+# Syntax check across all core code
+python -m compileall -q backend evaluation experiments
+
+# Lint (generated algorithm artifacts are auto-excluded via .ruff.toml)
+python -m ruff check .
+
+# Smoke-test the CLI entry points
+python evaluation/run_migration_reliability_benchmark.py --help
+python evaluation/run_optimization_fidelity_benchmark.py --help
+python evaluation/run_computational_scalability_benchmark.py --help
+python experiments/batch_translate.py --help
+python experiments/one_shot.py --help
+```
+
+Guidelines for contributors:
+
+- Keep every file under ~1000 lines; extract shared helpers into the area's `_common.py` module
+  when logic is reused across scripts.
+- Do not change public API/CLI contracts — `backend.engine.run_pipeline`, `backend.config`
+  constants, and all `--flags`/output formats of the benchmark and experiment CLIs are load-bearing.
+- `experiments/generated_algorithms/` is **generated output** — never edit it.
+- When you fix a bug or add a gotcha, update the relevant `CONTEXT.md` (root, `backend/`,
+  `evaluation/`, `experiments/`, `frontend/`) so the knowledge is preserved for future agents.
+
 ## Project Structure
 
 ```text
 evococo/
 ├── backend/                         # FastAPI service and seven-stage tournament engine
+│   ├── engine.py                    # Pipeline orchestration (single-branch lifecycle, judge)
+│   ├── executor.py                  # Static (Ruff) + runtime execution/repair
+│   ├── generator.py                 # LLM provider adapters (zhipu/deepseek/gemini/custom)
+│   ├── storage.py                   # RAG DB / spec / resource loading, artifact I/O
+│   ├── stats.py                     # Performance metrics aggregation + output header
+│   ├── config.py                    # Environment-driven configuration (load-bearing names)
+│   ├── main.py                      # FastAPI app: / and /ws endpoints
 │   ├── database/                    # Retrieval rules for common translation failures
 │   └── prompts/                     # Agent roles, specifications, and EvoX resources
-├── frontend/                        # Browser-based interactive interface
-├── experiments/                     # Batch runners, baselines, and public artifacts
-│   └── generated_algorithms/        # 48 generated tensorized EvoX algorithms
+├── frontend/                        # Self-contained browser interface (no CDN)
+├── experiments/                     # Batch/one-shot runners, baselines, and public artifacts
+│   ├── batch_translate.py           # Multi-algorithm pipeline runner
+│   ├── batch_one_shot.py            # Batch one-shot translation
+│   ├── one_shot.py                  # Single-shot translation
+│   ├── _common.py                   # Shared helpers (env setup, source discovery, JSON I/O)
+│   └── generated_algorithms/        # 48 generated tensorized EvoX algorithms (read-only)
 ├── evaluation/                      # Reliability, fidelity, and scaling benchmarks
-├── docs/images/                     # EvoX brand assets used by this README
+│   ├── run_migration_reliability_benchmark.py
+│   ├── run_optimization_fidelity_benchmark.py
+│   ├── run_computational_scalability_benchmark.py
+│   ├── _common.py                   # Shared CLI/discovery/CSV/subprocess helpers
+│   └── _benchmark_problems.py, _*_trial.py   # Problem definitions and worker trials
+├── docs/
+│   ├── TECHNICAL_REPORT.md          # Detailed engineering report
+│   └── images/                      # EvoX brand assets used by this README
 ├── requirements.txt
 └── README.md
 ```
@@ -234,6 +331,17 @@ when it is finalized.
 }
 ```
 -->
+
+## Troubleshooting
+
+- **`.env` created automatically on first import** — `backend/config.py` copies
+  `.env.example` to `.env` when the file is missing and prints a warning. Fill in your API keys
+  and restart.
+- **`UnicodeEncodeError` on Chinese-Windows (GBK) consoles** — a one-time import-time crash can
+  occur if `.env` does not exist yet. Set `PYTHONIOENCODING=utf-8` or run once with the env var
+  set, then restart normally.
+- **Frontend cannot connect** — confirm the backend is running on port 8000. The frontend derives
+  the WebSocket URL from the page origin (`file://` falls back to `ws://localhost:8000/ws`).
 
 ## Community and Support
 
