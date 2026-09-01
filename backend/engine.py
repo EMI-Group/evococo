@@ -1,111 +1,42 @@
 import asyncio
-import json
-import traceback
-import os
 import datetime
+import json
+import logging
+import os
 import re
+import traceback
+
 from pydantic import BaseModel, Field
 
-from .generator import generate_llm_response
+from .config import (
+    GLOBAL_SPEC_PATH,  # noqa: F401 - kept as module-level re-export
+    HISTORY_DIR,  # noqa: F401 - kept as module-level re-export
+    MAX_RETAINED_WORKSPACES,  # noqa: F401 - kept as module-level re-export
+    NUM_BRANCHES,
+    PROMPTS_DIR,  # noqa: F401 - kept as module-level re-export
+    RULES_DB_PATH,  # noqa: F401 - kept as module-level re-export
+    STRATEGIES_FULL,
+    STRATEGIES_SHORT,
+)
 from .executor import (
-    execute_code_trial,
     check_syntax_with_ruff,
     cleanup_workspace,
-    cleanup_old_workspaces,
+    execute_code_trial,
+)
+from .generator import generate_llm_response
+from .stats import aggregate_stage_metrics, format_stats_header
+from .storage import (
+    ensure_history_dir,
+    load_global_spec,
+    load_rag_db,
+    load_resource,
+    save_artifact,
 )
 
-from .config import (
-    NUM_BRANCHES,
-    STRATEGIES_SHORT,
-    STRATEGIES_FULL,
-    RULES_DB_PATH,
-    GLOBAL_SPEC_PATH,
-    HISTORY_DIR,
-    PROMPTS_DIR,
-    MAX_RETAINED_WORKSPACES,
-)
+logger = logging.getLogger(__name__)
 
 
-# --- Data loading helper functions ---
-
-
-def load_rag_db():
-    """Load RAG rule database from JSON file"""
-    if not os.path.exists(RULES_DB_PATH):
-        return []
-    try:
-        with open(RULES_DB_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, dict) and "rules" in data:
-            return data["rules"]
-        return data if isinstance(data, list) else []
-    except:  # noqa: E722
-        return []
-
-
-def load_global_spec():
-    """Load global specification from Markdown file"""
-    if os.path.exists(GLOBAL_SPEC_PATH):
-        try:
-            with open(GLOBAL_SPEC_PATH, "r", encoding="utf-8") as f:
-                return f.read()
-        except:  # noqa: E722
-            pass
-    return ""
-
-
-def load_resource(filename):
-    """Load resource files (SDK, Examples, Reference Context)"""
-    path = os.path.join(PROMPTS_DIR, filename)
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-        except:  # noqa: E722
-            pass
-    return ""
-
-
-# --- General helper functions ---
-
-
-def ensure_history_dir(algo_name="UnknownAlgo"):
-    """Ensure history directory exists, and return independent timestamp directory for current run"""
-    if not os.path.exists(HISTORY_DIR):
-        os.makedirs(HISTORY_DIR)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = os.path.join(HISTORY_DIR, f"{timestamp}_{algo_name}")
-    os.makedirs(run_dir)
-
-    # Trigger global history cleanup
-    cleanup_old_workspaces(HISTORY_DIR, max_retained=MAX_RETAINED_WORKSPACES)
-
-    return run_dir
-
-
-def save_artifact(run_dir, filename, content):
-    """Save intermediate artifacts"""
-    path = os.path.join(run_dir, filename)
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            if isinstance(content, (dict, list)):
-                f.write(json.dumps(content, indent=2, ensure_ascii=False))
-            else:
-                f.write(str(content))
-    except:  # noqa: E722
-        pass
-
-
-def extract_json(text):
-    """Only used for RAG Step JSON parsing (legacy compatibility fallback)"""
-    try:
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0]
-        elif "```" in text:
-            text = text.split("```")[0]
-        return json.loads(text.strip())
-    except:  # noqa: E722
-        return {}
+# --- Pydantic models ---
 
 
 class JudgeResult(BaseModel):
@@ -129,6 +60,11 @@ class RagResult(BaseModel):
 
 
 # --- Core logic: single branch lifecycle ---
+
+
+def _strip_code_fences(code: str) -> str:
+    """Strip markdown code fences (```python / ```) from generated code."""
+    return code.replace("```python", "").replace("```", "").strip()
 
 
 async def run_single_branch_lifecycle(
@@ -188,7 +124,7 @@ async def run_single_branch_lifecycle(
             metrics_out=coder_metrics,
         )
         branch_metrics["coder"] = coder_metrics
-        current_code = current_code.replace("```python", "").replace("```", "").strip()
+        current_code = _strip_code_fences(current_code)
 
         if run_dir:
             save_artifact(run_dir, f"4_code_draft_{branch_id}.py", current_code)
@@ -223,9 +159,7 @@ async def run_single_branch_lifecycle(
                     metrics_out=static_metrics,
                 )
                 branch_metrics["static_fixes"].append(static_metrics)
-                current_code = (
-                    current_code.replace("```python", "").replace("```", "").strip()
-                )
+                current_code = _strip_code_fences(current_code)
             else:
                 await status_callback(
                     "log", L_TAG, "Static Check failed, proceeding anyway."
@@ -305,9 +239,7 @@ async def run_single_branch_lifecycle(
                     metrics_out=runtime_metrics,
                 )
                 branch_metrics["runtime_fixes"].append(runtime_metrics)
-                current_code = (
-                    current_code.replace("```python", "").replace("```", "").strip()
-                )
+                current_code = _strip_code_fences(current_code)
             else:
                 await status_callback(
                     "log", "FAIL", f"[{L_TAG}] Failed after max retries."
@@ -324,8 +256,9 @@ async def run_single_branch_lifecycle(
             "metrics": branch_metrics,
         }
 
-    except Exception as e:
-        await status_callback("log", "FATAL", f"[{L_TAG}] Crashed: {str(e)}")
+    # Intentional: a branch crash is a fallback boundary -> return a failure result
+    except Exception as e:  # noqa: BLE001
+        await status_callback("log", "FATAL", f"[{L_TAG}] Crashed: {e!s}")
         traceback.print_exc()
         cleanup_workspace(session_id)
         return {
@@ -382,9 +315,10 @@ async def run_pipeline(matlab_code: str, status_callback):
     }
 
     # 1. Initialization
+    # Intentional: if the history dir cannot be created, fall back to run_dir=None
     try:
         run_dir = ensure_history_dir(algo_name)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         print(f"FAILED TO CREATE HISTORY DIR: {e}")
         traceback.print_exc()
         run_dir = None
@@ -392,38 +326,14 @@ async def run_pipeline(matlab_code: str, status_callback):
     session_id = (
         os.path.basename(run_dir)
         if run_dir
-        else f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{algo_name}"
+        else f"{datetime.datetime.now(datetime.timezone.utc).astimezone().strftime('%Y%m%d_%H%M%S')}_{algo_name}"
     )
     perf_stats["session_id"] = session_id
 
     def save_perf_stats():
         if not run_dir:
             return
-        perf_stats["total_tokens"] = {"prompt": 0, "completion": 0, "total": 0}
-        perf_stats["total_llm_time"] = 0.0
-
-        def add_metrics(m):
-            if m:
-                perf_stats["total_tokens"]["prompt"] += m.get("prompt_tokens", 0)
-                perf_stats["total_tokens"]["completion"] += m.get(
-                    "completion_tokens", 0
-                )
-                perf_stats["total_tokens"]["total"] += m.get("total_tokens", 0)
-                perf_stats["total_llm_time"] += m.get("latency", 0.0)
-
-        add_metrics(perf_stats["stages"].get("analyst"))
-        add_metrics(perf_stats["stages"].get("rag"))
-        add_metrics(perf_stats["stages"].get("architect"))
-        add_metrics(perf_stats["stages"].get("judge"))
-
-        for b in perf_stats["stages"].get("branches", []):
-            b_m = b.get("metrics", {})
-            add_metrics(b_m.get("coder"))
-            for s_fix in b_m.get("static_fixes", []):
-                add_metrics(s_fix)
-            for r_fix in b_m.get("runtime_fixes", []):
-                add_metrics(r_fix)
-
+        aggregate_stage_metrics(perf_stats)
         save_artifact(run_dir, "performance_stats.json", perf_stats)
 
     if run_dir:
@@ -436,6 +346,10 @@ async def run_pipeline(matlab_code: str, status_callback):
         "SYS",
         f"Detected algorithm style: {'PlatEMO' if is_platemo else 'Custom/Standalone'}",
     )
+
+    # Track the judge outcome (None until the Judge step produces a result).
+    # Used by the stats header to decide judge status / winning branch lines.
+    judge_result = None
 
     try:
         # Step 1: Analyst
@@ -494,7 +408,7 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         # ... (Rule matching logic) ...
         def _bug_no_from_id(s: str):
-            m = re.search(r"\bbug\b\s*#\s*(\d+)", str(s), flags=re.I)
+            m = re.search(r"\bbug\b\s*#\s*(\d+)", str(s), flags=re.IGNORECASE)
             return int(m.group(1)) if m else None
 
         no_to_rule = {}
@@ -699,7 +613,8 @@ async def run_pipeline(matlab_code: str, status_callback):
                     extra_data={"report": reasoning},
                 )
 
-            except Exception as e:
+            # Intentional: judge failure is a fallback boundary -> pick best successful branch
+            except Exception as e:  # noqa: BLE001
                 await status_callback("log", "ERR", f"Judge Failed: {e}. Fallback.")
                 best_res = min(
                     [r for r in results if r["success"]],
@@ -728,96 +643,18 @@ async def run_pipeline(matlab_code: str, status_callback):
                 "STATS",
                 f"Total LLM Time: {total_time:.2f}s | Total Tokens: {total_t:,} (Prompt: {total_p:,}, Completion: {total_c:,})",
             )
-        except Exception as stats_err:
+        # Intentional: stats logging is best-effort and must not break the pipeline
+        except Exception as stats_err:  # noqa: BLE001
             print(f">>> [WARNING] Failed to log/save performance stats: {stats_err}")
 
         # Construct and prepend performance stats header comment block
-        stats_header = (
-            "# ==============================================================================\n"
-            f"# EvoCoCo Performance Statistics\n"
-            f"# Total LLM Time: {perf_stats['total_llm_time']:.2f}s\n"
-            f"# Total Tokens: {perf_stats['total_tokens']['total']:,} "
-            f"(Prompt: {perf_stats['total_tokens']['prompt']:,}, Completion: {perf_stats['total_tokens']['completion']:,})\n"
-            "#\n"
-            "# Operators & Stages Status:\n"
-        )
-        if "analyst" in perf_stats["stages"]:
-            a = perf_stats["stages"]["analyst"]
-            stats_header += f"#   - Analyst: SUCCESS | Latency: {a.get('latency', 0.0):.2f}s | Tokens: {a.get('total_tokens', 0):,} (Prompt: {a.get('prompt_tokens', 0):,}, Completion: {a.get('completion_tokens', 0):,})\n"
-        if "rag" in perf_stats["stages"]:
-            r = perf_stats["stages"]["rag"]
-            stats_header += f"#   - RAG: SUCCESS | Latency: {r.get('latency', 0.0):.2f}s | Tokens: {r.get('total_tokens', 0):,} (Prompt: {r.get('prompt_tokens', 0):,}, Completion: {r.get('completion_tokens', 0):,})\n"
-        if "architect" in perf_stats["stages"]:
-            arc = perf_stats["stages"]["architect"]
-            stats_header += f"#   - Architect: SUCCESS | Latency: {arc.get('latency', 0.0):.2f}s | Tokens: {arc.get('total_tokens', 0):,} (Prompt: {arc.get('prompt_tokens', 0):,}, Completion: {arc.get('completion_tokens', 0):,})\n"
-
-        if "branches" in perf_stats["stages"] or "branches" in perf_stats.get(
-            "stages", {}
-        ):
-            for b in perf_stats["stages"].get("branches", []):
-                b_idx = b.get("branch_idx", -1)
-                strat_name = b.get("strategy", "Unknown Strategy")
-                success_str = "SUCCESS" if b.get("success") else "FAILED"
-                igd_val = b.get("igd", float("inf"))
-                if isinstance(igd_val, float) and igd_val != float("inf"):
-                    igd_str = f"{igd_val:.5f}"
-                else:
-                    igd_str = str(igd_val)
-                stats_header += f"#   - Branch {b_idx} ({strat_name}): {success_str} | Final IGD: {igd_str}\n"
-
-                b_m = b.get("metrics", {})
-                if "coder" in b_m and b_m["coder"]:
-                    c = b_m["coder"]
-                    stats_header += f"#     * Coder: SUCCESS | Latency: {c.get('latency', 0.0):.2f}s | Tokens: {c.get('total_tokens', 0):,} (Prompt: {c.get('prompt_tokens', 0):,}, Completion: {c.get('completion_tokens', 0):,})\n"
-                else:
-                    stats_header += "#     * Coder: FAILED or SKIPPED\n"
-
-                s_fixes = b_m.get("static_fixes", [])
-                if s_fixes:
-                    s_latency = sum(x.get("latency", 0.0) for x in s_fixes)
-                    s_tokens = sum(x.get("total_tokens", 0) for x in s_fixes)
-                    s_prompt = sum(x.get("prompt_tokens", 0) for x in s_fixes)
-                    s_completion = sum(x.get("completion_tokens", 0) for x in s_fixes)
-                    stats_header += f"#     * Static Fixer: {len(s_fixes)} attempts | Total Latency: {s_latency:.2f}s | Total Tokens: {s_tokens:,} (Prompt: {s_prompt:,}, Completion: {s_completion:,})\n"
-                else:
-                    stats_header += "#     * Static Fixer: 0 attempts\n"
-
-                r_fixes = b_m.get("runtime_fixes", [])
-                if r_fixes:
-                    r_latency = sum(x.get("latency", 0.0) for x in r_fixes)
-                    r_tokens = sum(x.get("total_tokens", 0) for x in r_fixes)
-                    r_prompt = sum(x.get("prompt_tokens", 0) for x in r_fixes)
-                    r_completion = sum(x.get("completion_tokens", 0) for x in r_fixes)
-                    stats_header += f"#     * Runtime Fixer: {len(r_fixes)} attempts | Total Latency: {r_latency:.2f}s | Total Tokens: {r_tokens:,} (Prompt: {r_prompt:,}, Completion: {r_completion:,})\n"
-                else:
-                    stats_header += "#     * Runtime Fixer: 0 attempts\n"
-
-        if "judge" in perf_stats["stages"]:
-            j = perf_stats["stages"]["judge"]
-            judge_status = (
-                "SUCCESS" if "judge_result" in locals() else "FAILED (Fallback)"
-            )
-            stats_header += f"#   - Judge/Selector: {judge_status} | Latency: {j.get('latency', 0.0):.2f}s | Tokens: {j.get('total_tokens', 0):,} (Prompt: {j.get('prompt_tokens', 0):,}, Completion: {j.get('completion_tokens', 0):,})\n"
-
-        winner_id = (
-            judge_result.winning_branch_id if "judge_result" in locals() else None
-        )
-        if winner_id is not None:
-            strat_name = STRATEGIES_SHORT[winner_id % len(STRATEGIES_SHORT)]
-            stats_header += f"# Winning Branch: {winner_id} (Strategy: {strat_name})\n"
-
-        stats_header += "#\n# Raw Operator Stats JSON:\n"
-        perf_stats_json_str = json.dumps(perf_stats, indent=2)
-        for line in perf_stats_json_str.split("\n"):
-            stats_header += f"# {line}\n"
-
-        stats_header += "# ==============================================================================\n\n"
+        stats_header = format_stats_header(perf_stats, judge_result)
 
         final_code = stats_header + final_code
 
         await status_callback("result_code", "Final Optimized Code", final_code)
         if run_dir:
-            save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)  # noqa: E701
+            save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)
 
         await status_callback(
             "step_done",
@@ -828,14 +665,17 @@ async def run_pipeline(matlab_code: str, status_callback):
         )
         return perf_stats
 
-    except Exception as e:
+    # Intentional: outer pipeline crash boundary -> save diagnostics and report fatal
+    except Exception as e:  # noqa: BLE001
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
         try:
             save_perf_stats()
-        except Exception:
-            pass
+        except Exception as stats_err:  # noqa: BLE001 - intentional: best-effort stats save on crash path
+            logger.warning(
+                "Failed to save performance stats after pipeline crash: %s", stats_err
+            )
         await status_callback("log", "FATAL", str(e))
         if run_dir:
-            save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())  # noqa: E701
+            save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
         await status_callback("fatal", "System Error", str(e))
