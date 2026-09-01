@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
-import importlib.util
+import importlib.util  # noqa: F401  (used by the Worker helpers section)
 import json
 import os
 import subprocess
@@ -31,6 +31,122 @@ RESULT_PREFIX_SCALING = "EVOCOCO_TRIAL_RESULT="
 # --- Entry-point helpers -------------------------------------------------
 # Owned by the entry-point refactor (run_optimization_fidelity_benchmark.py,
 # run_computational_scalability_benchmark.py).
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
+
+
+def discover_algorithms(args: argparse.Namespace) -> list[Path]:
+    if args.algorithm_file:
+        files = list(
+            dict.fromkeys(path.expanduser().resolve() for path in args.algorithm_file)
+        )
+    else:
+        directory = (args.algorithm_dir or DEFAULT_ALGORITHM_DIR).expanduser().resolve()
+        if not directory.is_dir():
+            raise ValueError(f"Algorithm directory does not exist: {directory}")
+        files = sorted(directory.glob("*.py"))
+
+    missing = [str(path) for path in files if not path.is_file()]
+    if missing:
+        raise ValueError(f"Algorithm file does not exist: {', '.join(missing)}")
+
+    if args.algorithms:
+        requested = set(args.algorithms)
+        files = [
+            path for path in files if path.stem in requested or path.name in requested
+        ]
+        found = {path.stem for path in files} | {path.name for path in files}
+        unmatched = sorted(name for name in requested if name not in found)
+        if unmatched:
+            raise ValueError(
+                f"Requested algorithms were not found: {', '.join(unmatched)}"
+            )
+
+    if not files:
+        raise ValueError("No Python algorithm files were selected")
+    return sorted(files, key=lambda path: path.name.casefold())
+
+
+def check_cuda(gpu: int) -> None:
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu)}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import torch; print(int(torch.cuda.is_available()), torch.cuda.device_count())",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip().startswith("1 "):
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            f"GPU {gpu} is not available to this Python environment. {detail}"
+        )
+
+
+def read_rows(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def append_row(
+    path: Path, row: dict[str, object], fieldnames: tuple[str, ...]
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    exists = path.exists() and path.stat().st_size > 0
+    with path.open("a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if not exists:
+            writer.writeheader()
+        writer.writerow({field: row.get(field, "") for field in fieldnames})
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def run_worker_process(
+    command: list[str],
+    *,
+    env: dict[str, str],
+    timeout: int,
+    result_prefix: str,
+) -> dict[str, object]:
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        return {"status": "timeout", "error": f"Exceeded {timeout}s: {error}"}
+
+    for line in reversed(completed.stdout.splitlines()):
+        if line.startswith(result_prefix):
+            result = json.loads(line[len(result_prefix) :])
+            result.update({"status": "success", "error": ""})
+            return result
+
+    detail = (completed.stderr or completed.stdout).strip()
+    if len(detail) > 1000:
+        detail = detail[-1000:]
+    return {
+        "status": "failed",
+        "error": f"Worker exited with code {completed.returncode}: {detail}",
+    }
+
 
 # --- Worker helpers ------------------------------------------------------
 # Owned by the worker refactor (_fidelity_trial.py, _scaling_trial.py).

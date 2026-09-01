@@ -11,20 +11,26 @@ from __future__ import annotations
 
 import argparse
 import csv
-import json
 import math
 import os
 import statistics
-import subprocess
 import sys
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
+from _common import (
+    DEFAULT_ALGORITHM_DIR,
+    DEFAULT_SCALING_OUTPUT_DIR,
+    RESULT_PREFIX_SCALING,
+    append_row,
+    check_cuda,
+    discover_algorithms,
+    positive_int,
+    read_rows,
+    run_worker_process,
+)
 
-ROOT = Path(__file__).resolve().parents[1]
 WORKER = Path(__file__).with_name("_scaling_trial.py")
-DEFAULT_ALGORITHM_DIR = ROOT / "experiments" / "generated_algorithms"
-DEFAULT_OUTPUT_DIR = ROOT / "evaluation_results" / "scaling"
 POPULATION_SIZES = (256, 512, 1024, 2048, 4096, 8192, 16384)
 DIMENSION_SIZES = (1024, 2048, 4096, 8192, 16384, 32768, 65536)
 RAW_FIELDS = (
@@ -79,14 +85,6 @@ SUMMARY_FIELDS = (
     "timeout_lower_bound_pairs",
     "timeout_lower_bound_speedup_x",
 )
-RESULT_PREFIX = "EVOCOCO_TRIAL_RESULT="
-
-
-def positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("value must be at least 1")
-    return parsed
 
 
 def parse_args() -> argparse.Namespace:
@@ -147,7 +145,7 @@ def parse_args() -> argparse.Namespace:
         "--timeout", type=positive_int, default=3600, help="Seconds per trial"
     )
     parser.add_argument("--recompile-limit", type=positive_int, default=512)
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_SCALING_OUTPUT_DIR)
     parser.add_argument(
         "--platemo-csv",
         type=Path,
@@ -168,78 +166,6 @@ def parse_args() -> argparse.Namespace:
     if args.gpu < 0:
         parser.error("--gpu must be non-negative")
     return args
-
-
-def discover_algorithms(args: argparse.Namespace) -> list[Path]:
-    if args.algorithm_file:
-        files = list(
-            dict.fromkeys(path.expanduser().resolve() for path in args.algorithm_file)
-        )
-    else:
-        directory = (args.algorithm_dir or DEFAULT_ALGORITHM_DIR).expanduser().resolve()
-        if not directory.is_dir():
-            raise ValueError(f"Algorithm directory does not exist: {directory}")
-        files = sorted(directory.glob("*.py"))
-
-    missing = [str(path) for path in files if not path.is_file()]
-    if missing:
-        raise ValueError(f"Algorithm file does not exist: {', '.join(missing)}")
-
-    if args.algorithms:
-        requested = set(args.algorithms)
-        files = [
-            path for path in files if path.stem in requested or path.name in requested
-        ]
-        found = {path.stem for path in files} | {path.name for path in files}
-        unmatched = sorted(name for name in requested if name not in found)
-        if unmatched:
-            raise ValueError(
-                f"Requested algorithms were not found: {', '.join(unmatched)}"
-            )
-
-    if not files:
-        raise ValueError("No Python algorithm files were selected")
-    return sorted(files, key=lambda path: path.name.casefold())
-
-
-def check_cuda(gpu: int) -> None:
-    env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(gpu)}
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import torch; print(int(torch.cuda.is_available()), torch.cuda.device_count())",
-        ],
-        capture_output=True,
-        text=True,
-        env=env,
-        timeout=30,
-        check=False,
-    )
-    if result.returncode != 0 or not result.stdout.strip().startswith("1 "):
-        detail = (result.stderr or result.stdout).strip()
-        raise RuntimeError(
-            f"GPU {gpu} is not available to this Python environment. {detail}"
-        )
-
-
-def read_rows(path: Path) -> list[dict[str, str]]:
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
-
-
-def append_row(path: Path, row: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    exists = path.exists() and path.stat().st_size > 0
-    with path.open("a", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=RAW_FIELDS)
-        if not exists:
-            writer.writeheader()
-        writer.writerow({field: row.get(field, "") for field in RAW_FIELDS})
-        handle.flush()
-        os.fsync(handle.fileno())
 
 
 def execution_modes(value: str) -> tuple[str, ...]:
@@ -303,31 +229,9 @@ def run_trial(
     if args.device == "cuda":
         env["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 
-    try:
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=args.timeout,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        return {"status": "timeout", "error": f"Exceeded {args.timeout}s: {error}"}
-
-    for line in reversed(completed.stdout.splitlines()):
-        if line.startswith(RESULT_PREFIX):
-            result = json.loads(line[len(RESULT_PREFIX) :])
-            result.update({"status": "success", "error": ""})
-            return result
-
-    detail = (completed.stderr or completed.stdout).strip()
-    if len(detail) > 1000:
-        detail = detail[-1000:]
-    return {
-        "status": "failed",
-        "error": f"Worker exited with code {completed.returncode}: {detail}",
-    }
+    return run_worker_process(
+        command, env=env, timeout=args.timeout, result_prefix=RESULT_PREFIX_SCALING
+    )
 
 
 def optional_mean(values: Iterable[float]) -> float | str:
@@ -711,7 +615,7 @@ def main() -> int:
                             "error": "",
                             **result,
                         }
-                        append_row(raw_path, row)
+                        append_row(raw_path, row, RAW_FIELDS)
                         print(format_result(row), flush=True)
                     write_summary(
                         raw_path,
