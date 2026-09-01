@@ -1,0 +1,20 @@
+﻿COMPILEALL_EXIT=0
+All checks passed!
+python : Traceback (most recent call last):
+At line:1 char:326
++ ... oding utf8; python -c "from backend import engine, executor, generato ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "<string>", line 1, in <module>
+    from backend import engine, executor, generator, config, main; print('IMPORT_OK')
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\projects\evococo\.genesis\workers\worker_T1_A5\backend\engine.py", line 11, in <module>
+    from .config import (
+    ...<8 lines>...
+    )
+  File "D:\projects\evococo\.genesis\workers\worker_T1_A5\backend\config.py", line 20, in <module>
+    print(f"\n\u26a0\ufe0f Created {ENV_PATH} from template. Please update your API keys in it.\n")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'gbk' codec can't encode character '\u26a0' in position 2: illegal multibyte sequence

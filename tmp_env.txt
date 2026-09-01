@@ -1,0 +1,12 @@
+﻿
+Name         Lines
+----         -----
+config.py      110
+engine.py      681
+executor.py    247
+generator.py   177
+main.py        105
+stats.py       128
+storage.py      97
+
+
