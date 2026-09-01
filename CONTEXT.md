@@ -20,7 +20,7 @@ EvoCoCo translates MATLAB/PlatEMO multi-objective evolutionary algorithms (MOEAs
 - `./evaluation` → benchmark CLIs: `run_migration_reliability_benchmark.py`, `run_optimization_fidelity_benchmark.py`, `run_computational_scalability_benchmark.py`; shared `_common.py`, `_benchmark_problems.py`, internal `_*_trial.py` workers.
 - `./experiments` → `batch_translate.py`, `batch_one_shot.py`, `one_shot.py`, `_common.py`; `generated_algorithms/` (read-only artifacts), `matlab_code/` (input data).
 - `./frontend` → web UI (seed editor; `initialScript` preserved verbatim).
-- `./docs` → documentation.
+- `./docs` → documentation: `images/` (brand assets), `TECHNICAL_REPORT.md` (engineering report on the code-quality pass).
 
 ## Known Issues
 - `.env` is auto-created from `.env.example` on first `backend.config` import (prints a warning; has a GBK-safe fallback). `.env` is gitignored — `git status` stays clean.
