@@ -1,22 +1,27 @@
-import os
 import asyncio
-import sys
-import uuid
-import re
 import math
-import time
+import os
+import re
 import shutil
-import traceback
 import subprocess
+import sys
+import time
+import traceback
+import uuid
 
 from .config import (
-    IGNORE_RUFF_CODES,
     BASE_WORKSPACE_DIR,
+    IGNORE_RUFF_CODES,
     MAX_RETAINED_WORKSPACES,
 )
 
-if not os.path.exists(BASE_WORKSPACE_DIR):
-    os.makedirs(BASE_WORKSPACE_DIR)
+os.makedirs(BASE_WORKSPACE_DIR, exist_ok=True)
+
+
+def _write_text_file(path: str, content: str) -> None:
+    """Write text content to a file (run via asyncio.to_thread in async contexts)."""
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
 
 
 def setup_workspace(session_id: str) -> str:
@@ -37,7 +42,7 @@ def cleanup_workspace(session_id: str):
             cleanup_old_workspaces(
                 BASE_WORKSPACE_DIR, max_retained=MAX_RETAINED_WORKSPACES
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - best-effort cleanup, non-fatal
             print(f"Error cleaning up workspace {session_id}: {e}")
 
 
@@ -61,11 +66,13 @@ def cleanup_old_workspaces(base_dir: str, max_retained: int = MAX_RETAINED_WORKS
             for d in dirs_to_delete:
                 shutil.rmtree(d, ignore_errors=True)
                 print(f">>> [DEBUG] Deleted old workspace: {d}")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort cleanup, non-fatal
         print(f">>> [DEBUG] Error in global workspace cleanup: {e}")
 
 
-async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[bool, str]:
+async def check_syntax_with_ruff(
+    code: str, session_id: str | None = None
+) -> tuple[bool, str]:
     """Use Ruff for static code analysis"""
     is_temp_session = False
     if not session_id:
@@ -76,8 +83,7 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
     file_path = os.path.join(workspace, "temp_check.py")
 
     try:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(code)
+        await asyncio.to_thread(_write_text_file, file_path, code)
 
         python_dir = os.path.dirname(sys.executable)
         ruff_executable = os.path.join(python_dir, "ruff")
@@ -100,10 +106,10 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
         def run_ruff():
             return subprocess.run(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 cwd=workspace,
                 timeout=5,
+                check=False,
             )
 
         try:
@@ -123,15 +129,15 @@ async def check_syntax_with_ruff(code: str, session_id: str = None) -> tuple[boo
                 clean_error = f"Ruff failed (Exit Code: {returncode}), check install."
             return False, clean_error
 
-    except Exception as e:
-        return False, f"Static Check Error: {str(e)}"
+    except Exception as e:  # noqa: BLE001 - report error as string, never raise
+        return False, f"Static Check Error: {e!s}"
     finally:
         if is_temp_session:
             cleanup_workspace(session_id)
 
 
 async def execute_code(
-    code_str: str, session_id: str = None, filename="algo_script.py"
+    code_str: str, session_id: str | None = None, filename="algo_script.py"
 ):
     """Run generated code in an isolated workspace and return its output."""
     if not session_id:
@@ -141,21 +147,19 @@ async def execute_code(
     file_path = os.path.join(workspace, filename)
 
     try:
-        # Note: can use aiofiles or to_thread here if needed, but simple file write is usually fast enough
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(code_str)
-    except Exception as e:
-        return False, "", f"System Error: Failed to write file - {str(e)}"
+        await asyncio.to_thread(_write_text_file, file_path, code_str)
+    except Exception as e:  # noqa: BLE001 - write failure reported as error tuple
+        return False, "", f"System Error: Failed to write file - {e!s}"
 
     try:
 
         def run_script():
             return subprocess.run(
                 [sys.executable, filename],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 cwd=workspace,
                 timeout=60,
+                check=False,
             )
 
         try:
@@ -175,8 +179,8 @@ async def execute_code(
         else:
             return False, stdout_str, stderr_str
 
-    except Exception as e:
-        return False, "", f"Runtime Error: {str(e)}\n{traceback.format_exc()}"
+    except Exception as e:  # noqa: BLE001 - runtime failure reported as error tuple
+        return False, "", f"Runtime Error: {e!s}\n{traceback.format_exc()}"
 
 
 def parse_igd_from_stdout(stdout: str) -> list[float]:

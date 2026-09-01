@@ -1,9 +1,10 @@
-import os
 import asyncio
 import json
+import os
 import re
 import time
 from functools import lru_cache
+from pathlib import Path
 
 import httpx
 from openai import AsyncOpenAI
@@ -20,12 +21,12 @@ provider_config = LLM_PROVIDERS[ACTIVE_PROVIDER]
 API_KEY = os.getenv(provider_config["api_key_env"])
 BASE_URL = provider_config["base_url"]
 MODEL_NAME = provider_config["model"]
-TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", 0.2))
-LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", 15.0))
-LLM_READ_TIMEOUT = float(os.getenv("LLM_READ_TIMEOUT", 600.0))
-LLM_NETWORK_RETRY_INTERVAL = float(os.getenv("LLM_NETWORK_RETRY_INTERVAL", 15.0))
+TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.2"))
+LLM_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", "15.0"))
+LLM_READ_TIMEOUT = float(os.getenv("LLM_READ_TIMEOUT", "600.0"))
+LLM_NETWORK_RETRY_INTERVAL = float(os.getenv("LLM_NETWORK_RETRY_INTERVAL", "15.0"))
 
-PROMPT_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 
 
 @lru_cache(maxsize=1)
@@ -91,8 +92,8 @@ def _load_prompt(filename, **kwargs):
 
 async def generate_llm_response(
     prompt_filename: str,
-    response_model: type[BaseModel] = None,
-    metrics_out: dict = None,
+    response_model: type[BaseModel] | None = None,
+    metrics_out: dict | None = None,
     **kwargs,
 ):
     """
@@ -169,6 +170,8 @@ async def generate_llm_response(
 
         return content
 
-    except Exception as e:
+    # Deliberate boundary: convert ANY failure into an error-string return so
+    # callers always receive a string (never raise). This is intentional.
+    except Exception as e:  # noqa: BLE001
         print(f"LLM Call Error: {e}")
-        return f"Error generating response: {str(e)}"
+        return f"Error generating response: {e!s}"
