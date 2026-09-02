@@ -132,6 +132,8 @@ backend over WebSocket. Paste the MATLAB source code into the input panel and cl
 interface displays every pipeline stage and returns the selected Python implementation when the
 tournament finishes.
 
+![EvoCoCo web interface](docs/images/screenshot.png)
+
 > [!TIP]
 > Keep the backend terminal open while using the browser interface so progress and error messages
 > remain visible.
