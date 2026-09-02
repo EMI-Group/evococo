@@ -202,32 +202,23 @@ dimension scaling, speedup calculation, output fields, and smoke tests are docum
 
 ```text
 evococo/
-├── backend/                         # FastAPI service and seven-stage tournament engine
-│   ├── engine.py                    # Pipeline orchestration (single-branch lifecycle, judge)
-│   ├── executor.py                  # Static (Ruff) + runtime execution/repair
-│   ├── generator.py                 # LLM provider adapters (zhipu/deepseek/gemini/custom)
-│   ├── storage.py                   # RAG DB / spec / resource loading, artifact I/O
-│   ├── stats.py                     # Performance metrics aggregation + reports
-│   ├── config.py                    # Environment-driven configuration (load-bearing names)
-│   ├── main.py                      # FastAPI app: / and /ws endpoints
-│   ├── database/                    # Retrieval rules for common translation failures
-│   └── prompts/                     # Agent roles, specifications, and EvoX resources
-├── frontend/                        # Self-contained browser interface (no CDN)
-├── experiments/                     # Batch/one-shot runners, baselines, and public artifacts
-│   ├── batch_translate.py           # Multi-algorithm pipeline runner
-│   ├── batch_one_shot.py            # Batch one-shot translation
-│   ├── one_shot.py                  # Single-shot translation
-│   ├── _common.py                   # Shared helpers (env setup, source discovery, JSON I/O)
-│   └── generated_algorithms/        # 48 generated tensorized EvoX algorithms (read-only)
-├── evaluation/                      # Reliability, fidelity, and scaling benchmarks
-│   ├── run_migration_reliability_benchmark.py
-│   ├── run_optimization_fidelity_benchmark.py
-│   ├── run_computational_scalability_benchmark.py
-│   ├── _common.py                   # Shared CLI/discovery/CSV/subprocess helpers
-│   └── _benchmark_problems.py, _*_trial.py   # Problem definitions and worker trials
-├── docs/
-│   └── images/                      # EvoX brand assets used by this README
+├── backend/                         # API and multi-agent generation pipeline
+│   ├── main.py                      # FastAPI and WebSocket entry point
+│   ├── engine.py                    # Multi-agent generation pipeline
+│   ├── config.py                    # Provider and pipeline configuration
+│   ├── generator.py                 # LLM requests and structured responses
+│   ├── executor.py                  # Static checks and runtime validation
+│   ├── database/                    # RAG rules
+│   └── prompts/                     # Agent prompts and generation rules
+├── frontend/
+│   └── index.html                   # Browser interface
+├── experiments/
+│   ├── batch_translate.py           # Command-line generation entry point
+│   └── generated_algorithms/        # 48 generated EvoX algorithms
+├── evaluation/                      # Reliability, fidelity, and scalability benchmarks
+├── .env.example                     # Configuration template
 ├── requirements.txt
+├── LICENSE
 └── README.md
 ```
 
