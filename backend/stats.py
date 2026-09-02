@@ -1,8 +1,8 @@
-"""Performance-stats aggregation and stats-header formatting for EvoCoCo.
+"""Performance-stats aggregation and report formatting for EvoCoCo.
 
 Extracted from backend/engine.py. Behavior is identical to the original
 inline logic: aggregate_stage_metrics resets totals to 0 before recomputing
-them, and format_stats_header builds the exact same comment block.
+them, and format_stats_header builds the standalone human-readable report.
 """
 
 import json
@@ -44,7 +44,7 @@ def aggregate_stage_metrics(perf_stats):
 
 
 def format_stats_header(perf_stats, judge_result=None):
-    """Build the performance-stats comment header prepended to the final code.
+    """Build the performance report saved separately from the final code.
 
     `judge_result` is the JudgeResult model when the judge step succeeded,
     or None otherwise. The judge-status line and winning-branch line only

@@ -647,10 +647,11 @@ async def run_pipeline(matlab_code: str, status_callback):
         except Exception as stats_err:  # noqa: BLE001
             print(f">>> [WARNING] Failed to log/save performance stats: {stats_err}")
 
-        # Construct and prepend performance stats header comment block
-        stats_header = format_stats_header(perf_stats, judge_result)
-
-        final_code = stats_header + final_code
+        # Keep performance metadata separate from the generated algorithm so
+        # FINAL_OUTPUT.py remains a clean, directly reusable source file.
+        stats_report = format_stats_header(perf_stats, judge_result)
+        if run_dir:
+            save_artifact(run_dir, "PERFORMANCE_STATS.txt", stats_report)
 
         await status_callback("result_code", "Final Optimized Code", final_code)
         if run_dir:
