@@ -353,7 +353,9 @@ async def main() -> None:
         if out_dir:
             Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-        await asyncio.to_thread(Path(args.output).write_text, python_code, encoding="utf-8")
+        await asyncio.to_thread(
+            Path(args.output).write_text, python_code, encoding="utf-8"
+        )
 
         print(f"[Success] Translation saved to {args.output}")
     else:

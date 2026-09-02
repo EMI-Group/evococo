@@ -104,9 +104,7 @@ def read_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def append_row(
-    path: Path, row: dict[str, object], fieldnames: tuple[str, ...]
-) -> None:
+def append_row(path: Path, row: dict[str, object], fieldnames: tuple[str, ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     exists = path.exists() and path.stat().st_size > 0
     with path.open("a", encoding="utf-8", newline="") as handle:

@@ -84,7 +84,9 @@ def read_matlab_source(path: Path) -> str:
             for file in sorted(files):
                 if is_matlab_source(file):
                     fpath = Path(root) / file
-                    parts.append(f"\n\n--- {file} ---\n{fpath.read_text(encoding='utf-8')}")
+                    parts.append(
+                        f"\n\n--- {file} ---\n{fpath.read_text(encoding='utf-8')}"
+                    )
         return "".join(parts)
     return path.read_text(encoding="utf-8")
 

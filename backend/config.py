@@ -18,9 +18,13 @@ ENV_EXAMPLE_PATH = str(Path(PROJECT_ROOT) / ".env.example")
 if not os.path.exists(ENV_PATH) and os.path.exists(ENV_EXAMPLE_PATH):
     shutil.copy(ENV_EXAMPLE_PATH, ENV_PATH)
     try:
-        print(f"\n⚠️ Created {ENV_PATH} from template. Please update your API keys in it.\n")
+        print(
+            f"\n⚠️ Created {ENV_PATH} from template. Please update your API keys in it.\n"
+        )
     except UnicodeEncodeError:
-        print(f"\n[WARNING] Created {ENV_PATH} from template. Please update your API keys in it.\n")
+        print(
+            f"\n[WARNING] Created {ENV_PATH} from template. Please update your API keys in it.\n"
+        )
 
 # Load environment variables FIRST before setting config defaults
 load_dotenv(ENV_PATH)

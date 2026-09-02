@@ -23,9 +23,7 @@ def aggregate_stage_metrics(perf_stats):
     def add_metrics(m):
         if m:
             perf_stats["total_tokens"]["prompt"] += m.get("prompt_tokens", 0)
-            perf_stats["total_tokens"]["completion"] += m.get(
-                "completion_tokens", 0
-            )
+            perf_stats["total_tokens"]["completion"] += m.get("completion_tokens", 0)
             perf_stats["total_tokens"]["total"] += m.get("total_tokens", 0)
             perf_stats["total_llm_time"] += m.get("latency", 0.0)
 
