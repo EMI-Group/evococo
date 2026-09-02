@@ -1,38 +1,55 @@
+"""Batch translate MATLAB algorithms to Python using EvoCoder."""
+
+import argparse
+import asyncio
+import importlib
+import logging
 import os
 import sys
-import asyncio
-import argparse
-import json
 import time
 from datetime import datetime
+from pathlib import Path
 
-# Add parent directory to path to allow importing backend
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from _common import (
+    MATLAB_EXTENSIONS,
+    algorithm_name,
+    ensure_repo_root_on_path,
+    read_json,
+    read_matlab_source,
+    set_win32_event_loop_policy,
+    write_json,
+)
 
-from backend.engine import run_pipeline
-from backend.config import NUM_BRANCHES, REASONING_EFFORT
-from backend.generator import ACTIVE_PROVIDER, MODEL_NAME
+ensure_repo_root_on_path()
+
+# Backend imports are intentionally delayed until the repository root has been
+# added to sys.path, allowing this file to run directly as a script.
+backend_config = importlib.import_module("backend.config")
+backend_engine = importlib.import_module("backend.engine")
+backend_generator = importlib.import_module("backend.generator")
+
+NUM_BRANCHES = backend_config.NUM_BRANCHES
+REASONING_EFFORT = backend_config.REASONING_EFFORT
+run_pipeline = backend_engine.run_pipeline
+ACTIVE_PROVIDER = backend_generator.ACTIVE_PROVIDER
+MODEL_NAME = backend_generator.MODEL_NAME
+
+logger = logging.getLogger(__name__)
 
 
-async def process_file(file_path, num_repeats, output_dir=None, repeat_concurrency=1):
-    matlab_code = ""
-    if os.path.isdir(file_path):
-        for root, _, files in os.walk(file_path):
-            for file in sorted(files):
-                if file.endswith(".m") or file.endswith(".txt"):
-                    fpath = os.path.join(root, file)
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        matlab_code += f"\n\n--- {file} ---\n{f.read()}"
-        algo_name = os.path.basename(file_path)
-    else:
-        with open(file_path, "r", encoding="utf-8") as f:
-            matlab_code = f.read()
-        algo_name = os.path.splitext(os.path.basename(file_path))[0]
+async def process_file(
+    file_path: Path,
+    num_repeats: int,
+    output_dir: Path | None = None,
+    repeat_concurrency: int = 1,
+) -> None:
+    matlab_code = await asyncio.to_thread(read_matlab_source, file_path)
+    algo_name = algorithm_name(file_path)
     print(f"\n{'=' * 50}\nProcessing Algorithm: {algo_name}\n{'=' * 50}")
 
     repeat_semaphore = asyncio.Semaphore(repeat_concurrency)
 
-    async def process_run(run_idx):
+    async def process_run(run_idx: int) -> None:
         async with repeat_semaphore:
             # History directories currently use second-resolution timestamps.
             # Stagger concurrent repeats so each EvoCoCo pipeline gets an
@@ -41,16 +58,14 @@ async def process_file(file_path, num_repeats, output_dir=None, repeat_concurren
                 await asyncio.sleep((run_idx - 1) * 1.1)
             await run_one(run_idx)
 
-    async def run_one(run_idx):
+    async def run_one(run_idx: int) -> None:
         run_started_at = datetime.now().astimezone()
         run_timer = time.perf_counter()
 
         if output_dir:
-            out_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}.py")
-            stats_file = os.path.join(
-                output_dir, f"{algo_name}_run{run_idx}_stats.json"
-            )
-            if os.path.exists(out_file) and os.path.exists(stats_file):
+            out_file = output_dir / f"{algo_name}_run{run_idx}.py"
+            stats_file = output_dir / f"{algo_name}_run{run_idx}_stats.json"
+            if out_file.exists() and stats_file.exists():
                 print(
                     f"\n--- Run {run_idx}/{num_repeats} for {algo_name} already exists, skipping ---"
                 )
@@ -101,53 +116,49 @@ async def process_file(file_path, num_repeats, output_dir=None, repeat_concurren
             }
 
             if output_dir:
-                os.makedirs(output_dir, exist_ok=True)
+                output_dir.mkdir(parents=True, exist_ok=True)
 
                 if final_code_captured:
-                    out_file = os.path.join(output_dir, f"{algo_name}_run{run_idx}.py")
-                    with open(out_file, "w", encoding="utf-8") as f:
-                        f.write(final_code_captured[0])
+                    out_file = output_dir / f"{algo_name}_run{run_idx}.py"
+                    await asyncio.to_thread(
+                        out_file.write_text, final_code_captured[0], encoding="utf-8"
+                    )
                     print(f"Saved result to {out_file}")
 
-                if stats_data:
-                    import json
-
-                    with open(stats_file, "w", encoding="utf-8") as f:
-                        json.dump(stats_data, f, indent=2, ensure_ascii=False)
-                    print(f"Saved stats JSON to {stats_file}")
+                await asyncio.to_thread(write_json, stats_file, stats_data)
+                print(f"Saved stats JSON to {stats_file}")
 
         except Exception as e:
+            # Intentional broad fallback: a failed pipeline run is recorded as
+            # failed stats and the batch continues (logger.exception documents it).
+            logger.exception("--- Run %d failed ---", run_idx)
             print(f"--- Run {run_idx} failed with exception: {e} ---")
             if output_dir:
-                import json
-
-                os.makedirs(output_dir, exist_ok=True)
+                output_dir.mkdir(parents=True, exist_ok=True)
                 run_finished_at = datetime.now().astimezone()
-                with open(stats_file, "w", encoding="utf-8") as f:
-                    json.dump(
-                        {
-                            "batch_run": {
-                                "status": "failed",
-                                "algorithm": algo_name,
-                                "run_index": run_idx,
-                                "source_path": os.path.abspath(file_path),
-                                "started_at": run_started_at.isoformat(),
-                                "finished_at": run_finished_at.isoformat(),
-                                "wall_time_seconds": time.perf_counter() - run_timer,
-                                "error": str(e),
-                            }
-                        },
-                        f,
-                        indent=2,
-                        ensure_ascii=False,
-                    )
+                await asyncio.to_thread(
+                    write_json,
+                    stats_file,
+                    {
+                        "batch_run": {
+                            "status": "failed",
+                            "algorithm": algo_name,
+                            "run_index": run_idx,
+                            "source_path": os.path.abspath(file_path),
+                            "started_at": run_started_at.isoformat(),
+                            "finished_at": run_finished_at.isoformat(),
+                            "wall_time_seconds": time.perf_counter() - run_timer,
+                            "error": str(e),
+                        }
+                    },
+                )
 
     await asyncio.gather(
         *(process_run(run_idx) for run_idx in range(1, num_repeats + 1))
     )
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Batch translate MATLAB algorithms to Python using EvoCoder."
     )
@@ -180,26 +191,25 @@ async def main():
     if args.repeat_concurrency < 1:
         parser.error("--repeat-concurrency must be at least 1")
 
-    input_dir = args.input_dir
-    output_dir = args.output_dir
+    input_dir = Path(args.input_dir)
+    output_dir = Path(args.output_dir)
 
-    if not os.path.isdir(input_dir):
+    if not input_dir.is_dir():
         print(f"Error: {input_dir} is not a valid directory.")
         sys.exit(1)
 
     m_files = []
-    for f in os.listdir(input_dir):
-        path = os.path.join(input_dir, f)
-        if os.path.isdir(path) or f.endswith(".m") or f.endswith(".txt"):
-            m_files.append(f)
+    for f in input_dir.iterdir():
+        if f.is_dir() or f.name.endswith(MATLAB_EXTENSIONS):
+            m_files.append(f.name)
 
     if not m_files:
         print(f"No algorithms (.m/.txt files or folders) found in {input_dir}.")
         return
 
     m_files = sorted(m_files)
-    os.makedirs(output_dir, exist_ok=True)
-    manifest_path = os.path.join(output_dir, "batch_manifest.json")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "batch_manifest.json"
     manifest = {
         "status": "running",
         "started_at": datetime.now().astimezone().isoformat(),
@@ -216,8 +226,7 @@ async def main():
         "evo_branches_per_pipeline": NUM_BRANCHES,
         "maximum_parallel_evo_branches": args.repeat_concurrency * NUM_BRANCHES,
     }
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    await asyncio.to_thread(write_json, manifest_path, manifest)
 
     print(
         f"Found {len(m_files)} algorithm(s) to process. "
@@ -227,7 +236,7 @@ async def main():
     )
 
     for m_file in m_files:
-        file_path = os.path.join(input_dir, m_file)
+        file_path = input_dir / m_file
         await process_file(
             file_path,
             args.repeats,
@@ -244,8 +253,7 @@ async def main():
     ]
     for name in stats_files:
         try:
-            with open(os.path.join(output_dir, name), "r", encoding="utf-8") as f:
-                stats = json.load(f)
+            stats = await asyncio.to_thread(read_json, output_dir / name)
             tokens = stats.get("total_tokens", {})
             for key in aggregate_tokens:
                 aggregate_tokens[key] += int(tokens.get(key, 0) or 0)
@@ -284,8 +292,7 @@ async def main():
             "output_cost_usd": output_cost,
             "total_cost_usd": input_cost + output_cost,
         }
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2, ensure_ascii=False)
+    await asyncio.to_thread(write_json, manifest_path, manifest)
 
     print("\nAll batch translations completed.")
     print(
@@ -294,6 +301,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    set_win32_event_loop_policy()
     asyncio.run(main())

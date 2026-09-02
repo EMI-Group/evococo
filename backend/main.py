@@ -1,16 +1,23 @@
-import sys
 import asyncio
+import json
+import logging
+import sys
+import traceback
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-import json
-import traceback
 
 # Import your engine module
 from .engine import run_pipeline
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("evococo.backend.main")
 
 app = FastAPI()
 
@@ -30,73 +37,69 @@ def read_root():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print(">>> [WS] Client Connected")  # Connection success log
+    logger.info("WS Client Connected")
+
+    # Hoisted out of the loop: define the status callback once (captures websocket)
+    async def send_update(
+        type_,
+        title,
+        message,
+        step_id=None,
+        extra_data=None,
+        is_success=None,
+        icon=None,
+    ):
+        response_data = {
+            "type": type_,
+            "title": title,
+            "message": message,
+            "step_id": step_id,
+            "extra_data": extra_data,
+            "is_success": is_success,
+            "icon": icon,
+        }
+
+        try:
+            # Check connection status before sending
+            # Note: websocket.client_state only roughly checks, try-except is the most robust
+            await websocket.send_text(json.dumps(response_data))
+        except (WebSocketDisconnect, RuntimeError):
+            # Log and ignore send failures; outer loop handles disconnect
+            logger.warning("Connection closed, failed to send update: %s", title)
+        except Exception:
+            # Deliberately swallow any send failure so the pipeline never crashes
+            logger.exception("Failed to send update: %s", title)
 
     try:
         while True:
             # Wait to receive frontend message
             data = await websocket.receive_text()
 
-            # Print immediately upon receiving message
-            print(f">>> [WS] Received Data Length: {len(data)}")
+            # Log immediately upon receiving message
+            logger.info("WS Received data length: %s", len(data))
 
             try:
                 payload = json.loads(data)
                 matlab_code = payload.get("code", "")
             except json.JSONDecodeError:
-                print(">>> [WS Error] Invalid JSON received")
+                logger.warning("Invalid JSON received")
                 continue
-
-            # --- Define robust callback function ---
-            async def send_update(
-                type_,
-                title,
-                message,
-                step_id=None,
-                extra_data=None,
-                is_success=None,
-                icon=None,
-            ):
-                response_data = {
-                    "type": type_,
-                    "title": title,
-                    "message": message,
-                    "step_id": step_id,
-                    "extra_data": extra_data,
-                    "is_success": is_success,
-                    "icon": icon,
-                }
-
-                try:
-                    # Check connection status before sending
-                    # Note: websocket.client_state only roughly checks, try-except is the most robust
-                    await websocket.send_text(json.dumps(response_data))
-                except (WebSocketDisconnect, RuntimeError) as e:  # noqa: F841
-                    # If connection is disconnected, print log but do not raise exception to avoid interrupting cleanup
-                    print(
-                        f">>> [WS Warning] Connection closed, failed to send update: {title}"
-                    )
-                    # You can choose to raise a custom exception here to stop pipeline, or ignore silently
-                    # To prevent pipeline from running empty, we choose to silently ignore and let outer loop handle
-                    pass
-                except Exception as e:
-                    print(f">>> [WS Send Error] {str(e)}")
 
             # --- Execute core Pipeline ---
             if matlab_code:
-                print(">>> [DEBUG] Starting run_pipeline...")
+                logger.info("Starting run_pipeline...")
                 try:
                     await run_pipeline(matlab_code, send_update)
                 except (WebSocketDisconnect, RuntimeError):
-                    print(">>> [WS] Pipeline stopped due to disconnection.")
+                    logger.warning("Pipeline stopped due to disconnection.")
                     break  # Exit while loop
             else:
-                print(">>> [WS Warning] Received empty code.")
+                logger.warning("Received empty code.")
                 await send_update("log", "Warning", "Code is empty.")
 
     except WebSocketDisconnect:
-        print(">>> [WS] Client Disconnected (Normal Close)")
-    except Exception as e:  # noqa: F841
+        logger.info("WS Client Disconnected (Normal Close)")
+    except Exception:  # noqa: BLE001
         # Only catch genuine unexpected errors
-        print(">>> [WS Fatal Error]")
+        logger.error("WS Fatal Error")
         traceback.print_exc()

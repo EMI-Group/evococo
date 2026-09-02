@@ -27,8 +27,9 @@
 5. [Quick Start](#quick-start)
 6. [Experiments and Benchmarking](#experiments-and-benchmarking)
 7. [Project Structure](#project-structure)
-8. [Community and Support](#community-and-support)
-9. [License](#license)
+8. [Citing EvoCoCo](#citing-evococo)
+9. [Community and Support](#community-and-support)
+10. [License](#license)
 
 ## Overview
 
@@ -73,8 +74,8 @@ experiments. The same algorithms are also integrated into
 ### 🧪 Closed-Loop Validation and Benchmarking
 
 - Combines Ruff checks, runtime execution, optimization feedback, repair, and candidate selection.
-- Includes 48 MOEAs for evaluating migration reliability, optimization fidelity, computational
-  scalability, external transfer, and component contributions.
+- Includes 48 MOEAs for evaluating migration reliability, optimization fidelity, and
+  computational scalability.
 
 ## Installation
 
@@ -84,20 +85,6 @@ Clone the repository and install its Python dependencies:
 git clone https://github.com/EMI-Group/evococo.git
 cd evococo
 python -m pip install -r requirements.txt
-```
-
-### Coding-agent installation
-
-Give the following instruction to a coding agent with terminal access:
-
-```text
-Install and validate this EvoCoCo repository:
-python -m pip install -r requirements.txt
-python -m compileall -q backend evaluation experiments
-python evaluation/run_migration_reliability_benchmark.py --help
-
-Report the Python, PyTorch, EvoX, and EvoMO versions, CUDA availability, and validation results.
-Do not call LLM APIs or run translation experiments during installation.
 ```
 
 A CUDA-capable GPU is recommended for generated-algorithm evaluation. The single-run DTLZ
@@ -128,9 +115,11 @@ Available provider names are `zhipu`, `deepseek-v4-pro`, `deepseek-v4-flash`, `g
 
 ## Quick Start
 
-### Start the backend
+EvoCoCo can generate algorithms through either the browser interface or the command line.
 
-From the project root, run:
+### Method 1: Web interface
+
+Start the backend from the project root:
 
 ```bash
 python -m uvicorn backend.main:app --reload --reload-dir backend --port 8000
@@ -138,38 +127,43 @@ python -m uvicorn backend.main:app --reload --reload-dir backend --port 8000
 
 The backend health endpoint will be available at <http://localhost:8000>.
 
-### Open the frontend
-
 Open [`frontend/index.html`](frontend/index.html) in a browser. The frontend connects to the local
-backend over WebSocket, displays every pipeline stage, and returns the selected Python
-implementation when the tournament finishes.
+backend over WebSocket. Paste the MATLAB source code into the input panel and click **Run**. The
+interface displays every pipeline stage and returns the selected Python implementation when the
+tournament finishes.
+
+![EvoCoCo web interface](docs/images/screenshot.png)
 
 > [!TIP]
 > Keep the backend terminal open while using the browser interface so progress and error messages
 > remain visible.
 
-> [!NOTE]
-> Validation executes generated Python code; use trusted inputs and run EvoCoCo locally or in an
-> isolated environment.
+### Method 2: Command line
+
+The command-line workflow does not require the Web backend. Create `experiments/single_input/` and
+place one MATLAB `.m` file (or one directory of related `.m`/`.txt` files) inside it. Then run the
+full EvoCoCo pipeline once:
+
+```bash
+python experiments/batch_translate.py \
+  --input_dir experiments/single_input \
+  --output_dir experiments/single_output \
+  --repeats 1 \
+  --repeat-concurrency 1
+```
+
+The generated algorithm is written to `experiments/single_output/<algorithm>_run1.py`, with run
+statistics in the adjacent `<algorithm>_run1_stats.json`. Detailed intermediate artifacts are
+retained under `run_history/`.
 
 ## Experiments and Benchmarking
 
 ### Batch translation
 
-Create an input directory containing `.m` or `.txt` files. A subdirectory containing multiple
-MATLAB source files is treated as one algorithm:
-
-```bash
-mkdir -p experiments/matlab_code
-python experiments/batch_translate.py \
-  --input_dir experiments/matlab_code \
-  --output_dir experiments/benchmark_results \
-  --repeats 1 \
-  --repeat-concurrency 1
-```
-
-Each pipeline run starts six candidate branches and can consume multiple LLM requests. Begin with
-one repeat and one concurrent run when validating a new provider configuration.
+The command-line workflow above also supports batch generation. Place multiple `.m`/`.txt` files
+in the input directory; each file is treated as one algorithm. A subdirectory containing related
+source files is also treated as one algorithm. Use `--repeats` for repeated generations and
+`--repeat-concurrency` to control how many repeats run concurrently.
 
 ### Evaluation benchmarks
 
@@ -208,32 +202,39 @@ dimension scaling, speedup calculation, output fields, and smoke tests are docum
 
 ```text
 evococo/
-├── backend/                         # FastAPI service and seven-stage tournament engine
-│   ├── database/                    # Retrieval rules for common translation failures
-│   └── prompts/                     # Agent roles, specifications, and EvoX resources
-├── frontend/                        # Browser-based interactive interface
-├── experiments/                     # Batch runners, baselines, and public artifacts
-│   └── generated_algorithms/        # 48 generated tensorized EvoX algorithms
-├── evaluation/                      # Reliability, fidelity, and scaling benchmarks
-├── docs/images/                     # EvoX brand assets used by this README
+├── backend/                         # API and multi-agent generation pipeline
+│   ├── main.py                      # FastAPI and WebSocket entry point
+│   ├── engine.py                    # Multi-agent generation pipeline
+│   ├── config.py                    # Provider and pipeline configuration
+│   ├── generator.py                 # LLM requests and structured responses
+│   ├── executor.py                  # Static checks and runtime validation
+│   ├── database/                    # RAG rules
+│   └── prompts/                     # Agent prompts and generation rules
+├── frontend/
+│   └── index.html                   # Browser interface
+├── experiments/
+│   ├── batch_translate.py           # Command-line generation entry point
+│   └── generated_algorithms/        # 48 generated EvoX algorithms
+├── evaluation/                      # Reliability, fidelity, and scalability benchmarks
+├── .env.example                     # Configuration template
 ├── requirements.txt
+├── LICENSE
 └── README.md
 ```
 
-<!--
 ## Citing EvoCoCo
 
-If you use EvoCoCo in your research, please cite the following paper. Add the publication metadata
-when it is finalized.
+If you use EvoCoCo in your research, please cite the
+[arXiv preprint](https://arxiv.org/abs/XXXX.XXXXX):
 
 ```bibtex
 @article{evococo,
-  title   = {Semantics-Guided Automatic Tensorization for Evolutionary Multiobjective Optimization: A Multi-Agent Framework},
-  author  = {Liang, Zhenyu and Huang, Beichen and Zheng, Bowen and Cheng, Ran},
-  year    = {2026}
+  title         = {Semantics-Guided Automatic Tensorization for Evolutionary Multiobjective Optimization: A Multi-Agent Framework},
+  author        = {Liang, Zhenyu and Huang, Beichen and Zheng, Bowen and Cheng, Ran},
+  journal       = {arXiv preprint arXiv:XXXX.XXXXX},
+  year          = {2026}
 }
 ```
--->
 
 ## Community and Support
 

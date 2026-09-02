@@ -74,7 +74,7 @@ Break down the execution flow.
     * **Logic**: ...
     * **Tensorization Opportunity**: [Flag loops that need broadcasting]
 
-## 6. Critical Algorithmic Idiosyncrasies (Deep Code Inspection)
+## 7. Critical Algorithmic Idiosyncrasies (Deep Code Inspection)
 **Goal**: Identify deviations from standard textbook algorithms.
 **Checklist**:
 * **State Accumulation**: Does any variable (like ideal point `zmin`, nadir point `zmax`, or archive) persist and accumulate across generations? Or is it reset every step?
@@ -85,7 +85,7 @@ Break down the execution flow.
     * **Indicator**: How is IGD/HV calculated?
 * **Control Flow**: Are there "Peeling Loops" (iteratively removing layers of solutions)?
 
-## 7. External Dependencies
+## 8. External Dependencies
 List helper functions called in MATLAB.
 * **`NDSort`**: [Standard or Custom?]
 * **`CrowdingDistance`**: [Standard or Custom?]

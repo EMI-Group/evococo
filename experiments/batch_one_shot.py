@@ -1,55 +1,66 @@
-import os
-import sys
+"""Batch One-Shot MATLAB to Python Translation Baseline."""
+
 import argparse
 import asyncio
-from dotenv import load_dotenv
+import importlib
+import logging
+import os
+import sys
+from pathlib import Path
+
+from _common import (
+    EXCLUDED_INPUT_FILES,
+    ensure_repo_root_on_path,
+    load_dotenv_from_root,
+    read_matlab_source,
+    set_win32_event_loop_policy,
+    setup_litellm_env,
+)
 
 # 1. Load dotenv and export Litellm configuration as OpenAI env vars BEFORE importing one_shot
-dotenv_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
-)
-load_dotenv(dotenv_path)
+ensure_repo_root_on_path()
+load_dotenv_from_root()
+setup_litellm_env()
 
-if not os.getenv("OPENAI_API_KEY"):
-    litellm_key = os.getenv("LITELLM_API_KEY")
-    if litellm_key:
-        os.environ["OPENAI_API_KEY"] = litellm_key
-if not os.getenv("OPENAI_BASE_URL"):
-    litellm_url = os.getenv("LITELLM_BASE_URL")
-    if litellm_url:
-        os.environ["OPENAI_BASE_URL"] = litellm_url
-if not os.getenv("OPENAI_MODEL"):
-    os.environ["OPENAI_MODEL"] = "gemini/gemini-3-flash-preview"
+# This import must happen after the environment mapping above because one_shot
+# initializes its provider configuration at import time.
+one_shot_module = importlib.import_module("one_shot")
+MODEL_NAME = one_shot_module.MODEL_NAME
+one_shot_translate = one_shot_module.one_shot_translate
 
-# Ensure experiments directory is in path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from one_shot import MODEL_NAME, one_shot_translate  # noqa: E402
+logger = logging.getLogger(__name__)
 
 
-async def worker(sem, m_file, run_idx, input_dir, output_dir, stats):
+async def worker(
+    sem: asyncio.Semaphore,
+    m_file: str,
+    run_idx: int,
+    input_dir: str,
+    output_dir: str,
+    stats: dict,
+) -> None:
     async with sem:
-        file_path = os.path.join(input_dir, m_file)
+        file_path = Path(input_dir) / m_file
         algo_name = os.path.splitext(m_file)[0]
         out_name = f"{algo_name}_run{run_idx}.py"
-        out_path = os.path.join(output_dir, out_name)
+        out_path = Path(output_dir) / out_name
 
-        if os.path.exists(out_path):
+        if out_path.exists():
             print(f"[Skipped] {out_name} already exists.")
             stats["skipped"] += 1
             return
 
         print(f"[Generating] {algo_name} Run {run_idx}...")
 
-        with open(file_path, "r", encoding="utf-8") as file_obj:
-            matlab_code = file_obj.read()
+        matlab_code = await asyncio.to_thread(read_matlab_source, file_path)
 
         for attempt in range(5):
             try:
                 python_code = await one_shot_translate(matlab_code)
                 if python_code and "class" in python_code:
-                    with open(out_path, "w", encoding="utf-8") as f:
-                        f.write(python_code)
+                    await asyncio.to_thread(
+                        out_path.write_text, python_code, encoding="utf-8"
+                    )
                     print(f"[Success] {out_name} saved on attempt {attempt + 1}.")
                     stats["success"] += 1
                     return
@@ -58,6 +69,9 @@ async def worker(sem, m_file, run_idx, input_dir, output_dir, stats):
                         f"[Warning] {out_name} attempt {attempt + 1} got empty or invalid response."
                     )
             except Exception as e:
+                # Intentional broad catch for the retry loop: transient network/API
+                # errors are retried up to 5 attempts (logger.exception documents it).
+                logger.exception("[Error] %s attempt %d failed", out_name, attempt + 1)
                 print(
                     f"[Error] {out_name} attempt {attempt + 1} failed with exception: {e}"
                 )
@@ -69,7 +83,7 @@ async def worker(sem, m_file, run_idx, input_dir, output_dir, stats):
         stats["failed"] += 1
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser(
         description="Batch One-Shot MATLAB to Python Translation Baseline"
     )
@@ -104,20 +118,18 @@ async def main():
     repeats = args.repeats
     concurrency = args.concurrency
 
-    if not os.path.isdir(input_dir):
+    if not Path(input_dir).is_dir():
         print(f"Error: {input_dir} is not a valid directory.")
         sys.exit(1)
 
-    os.makedirs(output_dir, exist_ok=True)
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # Gather all algorithm files
     m_files = sorted(
         [
             f
             for f in os.listdir(input_dir)
-            if f.endswith(".txt")
-            and f
-            not in ["analysis.txt", "dryrun_output.txt", "references_and_copyrights.md"]
+            if f.endswith(".txt") and f not in EXCLUDED_INPUT_FILES
         ]
     )
 
@@ -155,6 +167,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    set_win32_event_loop_policy()
     asyncio.run(main())

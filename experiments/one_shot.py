@@ -1,21 +1,23 @@
-import os
-import sys
+"""One-shot MATLAB to Python Translation Baseline."""
+
 import argparse
 import asyncio
+import importlib
+import logging
+import os
 import re
 import time
-from dotenv import load_dotenv
+from pathlib import Path
+
+from _common import ensure_repo_root_on_path, load_dotenv_from_root, read_matlab_source
 from openai import AsyncOpenAI
 
-# Automatically locate the .env file in the project root directory
-dotenv_path = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"
-)
-load_dotenv(dotenv_path)
+ensure_repo_root_on_path()
+load_dotenv_from_root()
 
-# Import backend configuration dynamically
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from backend.config import LLM_PROVIDERS  # noqa: E402
+# This import is delayed until the repository root and .env are loaded so the
+# script works when invoked directly from the experiments directory.
+LLM_PROVIDERS = importlib.import_module("backend.config").LLM_PROVIDERS
 
 ACTIVE_PROVIDER = os.getenv("ACTIVE_LLM_PROVIDER", "litellm")
 if ACTIVE_PROVIDER in LLM_PROVIDERS:
@@ -30,6 +32,8 @@ else:
     MODEL_NAME = os.getenv("OPENAI_MODEL")
 
 client = AsyncOpenAI(api_key=API_KEY, base_url=BASE_URL)
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_ONESHOT = """You translate MATLAB multi-objective evolutionary algorithms into high-performance Python code using the EvoX framework format and PyTorch.
 
@@ -295,6 +299,9 @@ async def one_shot_translate_with_metrics(matlab_code: str) -> tuple[str, dict]:
         }
         return content, metrics
     except Exception as e:
+        # Documented contract: never raise from translation; return error metrics
+        # instead (logger.exception records the failure).
+        logger.exception("Translation Error")
         print(f"Translation Error: {e}")
         return "", {
             "provider": ACTIVE_PROVIDER,
@@ -310,7 +317,7 @@ async def one_shot_translate(matlab_code: str) -> str:
     return content
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser(
         description="One-shot MATLAB to Python Translation Baseline"
     )
@@ -326,21 +333,11 @@ async def main():
     )
     args = parser.parse_args()
 
-    if not os.path.exists(args.input):
+    if not Path(args.input).exists():
         print(f"Error: Input file {args.input} not found.")
         return
 
-    matlab_code = ""
-    if os.path.isdir(args.input):
-        for root, _, files in os.walk(args.input):
-            for file in sorted(files):
-                if file.endswith(".m") or file.endswith(".txt"):
-                    fpath = os.path.join(root, file)
-                    with open(fpath, "r", encoding="utf-8") as f:
-                        matlab_code += f"\n\n--- {file} ---\n{f.read()}"
-    else:
-        with open(args.input, "r", encoding="utf-8") as f:
-            matlab_code = f.read()
+    matlab_code = await asyncio.to_thread(read_matlab_source, Path(args.input))
 
     print("=======================================")
     print(" [Baseline: One-Shot LLM Translation] ")
@@ -354,10 +351,11 @@ async def main():
         # Automatically create directories if the output path contains folders
         out_dir = os.path.dirname(args.output)
         if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(python_code)
+        await asyncio.to_thread(
+            Path(args.output).write_text, python_code, encoding="utf-8"
+        )
 
         print(f"[Success] Translation saved to {args.output}")
     else:
