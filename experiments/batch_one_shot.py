@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import importlib
 import logging
 import os
 import sys
@@ -21,10 +22,11 @@ ensure_repo_root_on_path()
 load_dotenv_from_root()
 setup_litellm_env()
 
-# Ensure experiments directory is in path so `import one_shot` resolves
-sys.path.append(str(Path(__file__).resolve().parent))
-
-from one_shot import MODEL_NAME, one_shot_translate
+# This import must happen after the environment mapping above because one_shot
+# initializes its provider configuration at import time.
+one_shot_module = importlib.import_module("one_shot")
+MODEL_NAME = one_shot_module.MODEL_NAME
+one_shot_translate = one_shot_module.one_shot_translate
 
 logger = logging.getLogger(__name__)
 

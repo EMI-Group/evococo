@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import importlib
 import logging
 import os
 import re
@@ -14,7 +15,9 @@ from openai import AsyncOpenAI
 ensure_repo_root_on_path()
 load_dotenv_from_root()
 
-from backend.config import LLM_PROVIDERS
+# This import is delayed until the repository root and .env are loaded so the
+# script works when invoked directly from the experiments directory.
+LLM_PROVIDERS = importlib.import_module("backend.config").LLM_PROVIDERS
 
 ACTIVE_PROVIDER = os.getenv("ACTIVE_LLM_PROVIDER", "litellm")
 if ACTIVE_PROVIDER in LLM_PROVIDERS:

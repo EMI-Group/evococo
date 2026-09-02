@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import importlib
 import logging
 import os
 import sys
@@ -21,9 +22,17 @@ from _common import (
 
 ensure_repo_root_on_path()
 
-from backend.config import NUM_BRANCHES, REASONING_EFFORT
-from backend.engine import run_pipeline
-from backend.generator import ACTIVE_PROVIDER, MODEL_NAME
+# Backend imports are intentionally delayed until the repository root has been
+# added to sys.path, allowing this file to run directly as a script.
+backend_config = importlib.import_module("backend.config")
+backend_engine = importlib.import_module("backend.engine")
+backend_generator = importlib.import_module("backend.generator")
+
+NUM_BRANCHES = backend_config.NUM_BRANCHES
+REASONING_EFFORT = backend_config.REASONING_EFFORT
+run_pipeline = backend_engine.run_pipeline
+ACTIVE_PROVIDER = backend_generator.ACTIVE_PROVIDER
+MODEL_NAME = backend_generator.MODEL_NAME
 
 logger = logging.getLogger(__name__)
 
