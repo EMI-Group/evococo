@@ -13,7 +13,7 @@
 </h2>
 
 <div align="center">
-  <a href="https://arxiv.org/abs/XXXX.XXXXX">
+  <a href="https://arxiv.org/abs/2609.02387">
     <img src="https://img.shields.io/badge/EvoCoCo%20paper-arXiv-red?style=for-the-badge" alt="EvoCoCo Paper on arXiv">
   </a>
 </div>
@@ -225,13 +225,13 @@ evococo/
 ## Citing EvoCoCo
 
 If you use EvoCoCo in your research, please cite the
-[arXiv preprint](https://arxiv.org/abs/XXXX.XXXXX):
+[arXiv preprint](https://arxiv.org/abs/2609.02387):
 
 ```bibtex
 @article{evococo,
   title         = {Semantics-Guided Automatic Tensorization for Evolutionary Multiobjective Optimization: A Multi-Agent Framework},
   author        = {Liang, Zhenyu and Huang, Beichen and Zheng, Bowen and Cheng, Ran},
-  journal       = {arXiv preprint arXiv:XXXX.XXXXX},
+  journal       = {arXiv preprint arXiv:2609.02387},
   year          = {2026}
 }
 ```
