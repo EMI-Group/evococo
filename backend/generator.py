@@ -75,8 +75,7 @@ def _load_prompt(filename, **kwargs):
     """
     path = os.path.join(PROMPT_DIR, filename)
     if not os.path.exists(path):
-        print(f">>> [ERROR] Prompt file not found: {path}")
-        return f"Error: Prompt file {filename} not found."
+        raise FileNotFoundError(f"Prompt file not found: {path}")
 
     with open(path, "r", encoding="utf-8") as f:
         content = f.read()
@@ -94,6 +93,7 @@ async def generate_llm_response(
     prompt_filename: str,
     response_model: type[BaseModel] | None = None,
     metrics_out: dict | None = None,
+    temperature: float | None = None,
     **kwargs,
 ):
     """
@@ -103,6 +103,7 @@ async def generate_llm_response(
         prompt_filename (str): Filename in the prompts/ directory (e.g., "1_analyst.md")
         response_model (type[BaseModel], optional): Pydantic model to enforce and parse structured output.
         metrics_out (dict, optional): Dict to record token usage and latency metrics.
+        temperature (float, optional): Override the default API temperature.
         **kwargs: Variables to inject into the prompt (e.g., matlab_code, analyst_report)
     """
     try:
@@ -122,7 +123,7 @@ async def generate_llm_response(
         response = await _get_client().chat.completions.create(
             model=MODEL_NAME,
             messages=[{"role": "user", "content": prompt_content}],
-            temperature=TEMPERATURE,
+            temperature=TEMPERATURE if temperature is None else temperature,
             stream=False,
             **kwargs_api,
         )
@@ -144,6 +145,8 @@ async def generate_llm_response(
 
         # C. Clean Response
         content = response.choices[0].message.content
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(f"Empty LLM response for {prompt_filename}")
 
         # Pydantic Structured Output Mode
         if response_model:
@@ -167,11 +170,13 @@ async def generate_llm_response(
         content = re.sub(r"^```[a-zA-Z]*\s*\n", "", content)
         content = re.sub(r"\n```\s*$", "", content)
         content = content.replace("```", "").strip()
+        if not content:
+            raise ValueError(f"Empty LLM response for {prompt_filename}")
 
         return content
 
-    # Deliberate boundary: convert ANY failure into an error-string return so
-    # callers always receive a string (never raise). This is intentional.
-    except Exception as e:  # noqa: BLE001
+    # Pipeline, branch and judge boundaries decide whether a failure can recover.
+    # Never let an API error become an apparently valid report, blueprint or code.
+    except Exception as e:
         print(f"LLM Call Error: {e}")
-        return f"Error generating response: {e!s}"
+        raise

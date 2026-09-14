@@ -32,6 +32,10 @@ Follow this coding style (imports, Mutable usage, class structure).
 2.  **Mutable Semantics**: Use `self.pop = Mutable(...)`. **NEVER** use `.value`.
 3.  **Tensor Shapes**: Strictly follow the "Tensor Map" in the Blueprint.
 4.  **RAG Compliance**: If the Blueprint mentions a "Hard Constraint" (e.g., specific helper function or sentinel value), you **MUST** implement it exactly.
+    **Selection Semantics**: Preserve each site's Selection Semantics Contract.
+    Add a short comment at the call recording semantic priority and SDK key order.
+    For rank-first/crowding-second selection, use `fitnesses=[-crowding, rank]`.
+    The last SDK key is primary; never use a weighted rank/crowding score instead.
 5.  **NO EXTRA CONTROL-FLOW (ABSOLUTE)**:
     - The output code MUST NOT contain the standalone keywords: `break` or `continue` anywhere.
     - The output code MUST NOT introduce any early `return` statements inside algorithm logic.
@@ -42,6 +46,7 @@ Follow this coding style (imports, Mutable usage, class structure).
         - `if ...: return`
         - `if ...: raise ...` (except the single `raise NotImplementedError` placeholder in the skeleton BEFORE real logic is implemented)
     - Assume the MATLAB logic is correct. Do NOT add extra termination checks or guards. Translate the logic exactly without introducing new control-flow exits.
+    - These rules apply to algorithm logic. Preserve the required fitness validation in the fixed demo block below.
 6.  **No Extra Loops**:
     - Do NOT introduce new Python `for`/`while` loops beyond what the Blueprint explicitly requires.
     - Prefer vectorized tensor operations over Python loops.
@@ -133,8 +138,9 @@ if __name__ == "__main__":
 
         if (i + 1) % 5 == 0:
             fit = workflow.algorithm.fit
-            # Simple NaN filtering for metric calculation
-            fit = fit[~torch.any(torch.isnan(fit), dim=1)]
+            # Validate the full population; never hide invalid individuals.
+            if fit.numel() == 0 or not torch.isfinite(fit).all():
+                raise ValueError("Runtime validation failed: empty or non-finite fitness")
             print(f"Gen {i + 1} IGD: {igd(fit, pf)}")
 
     torch.cuda.synchronize()

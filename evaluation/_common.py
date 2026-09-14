@@ -13,7 +13,9 @@ or isolated trial worker (``_*_trial.py``).  Organization:
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
+import hashlib
 import importlib.util
 import json
 import os
@@ -31,6 +33,7 @@ DEFAULT_FIDELITY_OUTPUT_DIR = ROOT / "evaluation_results" / "fidelity"
 DEFAULT_SCALING_OUTPUT_DIR = ROOT / "evaluation_results" / "scaling"
 RESULT_PREFIX_FIDELITY = "EVOCOCO_FIDELITY_RESULT="
 RESULT_PREFIX_SCALING = "EVOCOCO_TRIAL_RESULT="
+TRIAL_IDENTITY_FIELDS = ("algorithm_file", "algorithm_sha256", "device", "gpu")
 
 # --- Entry-point helpers -------------------------------------------------
 # Shared by run_optimization_fidelity_benchmark.py and
@@ -104,9 +107,77 @@ def read_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def algorithm_identity(path: Path, device: str, gpu: int) -> dict[str, str]:
+    """Identify the source bytes and execution device for resume and summaries."""
+    path = path.expanduser().resolve()
+    return {
+        "algorithm_file": str(path),
+        "algorithm_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "device": device,
+        "gpu": str(gpu) if device == "cuda" else "",
+    }
+
+
+def has_trial_identity(row: dict[str, object]) -> bool:
+    """Legacy CSV rows cannot establish which source version was executed."""
+    return bool(
+        row.get("algorithm_file")
+        and row.get("algorithm_sha256")
+        and row.get("device") in {"cpu", "cuda"}
+        and (row.get("device") == "cpu" or row.get("gpu") not in {None, ""})
+    )
+
+
+def trial_identity_key(row: dict[str, object]) -> tuple[object, ...]:
+    return tuple(row.get(field, "") for field in TRIAL_IDENTITY_FIELDS)
+
+
+def inject_module_prelude(code: str, prelude: str) -> str:
+    """Insert executable setup after the module docstring and future imports."""
+    module = ast.parse(code)
+    insertion = 0
+    if (
+        module.body
+        and isinstance(module.body[0], ast.Expr)
+        and isinstance(module.body[0].value, ast.Constant)
+        and isinstance(module.body[0].value.value, str)
+    ):
+        insertion = 1
+    while insertion < len(module.body):
+        statement = module.body[insertion]
+        if (
+            not isinstance(statement, ast.ImportFrom)
+            or statement.module != "__future__"
+        ):
+            break
+        insertion += 1
+    module.body[insertion:insertion] = ast.parse(prelude).body
+    return ast.unparse(module) + "\n"
+
+
 def append_row(path: Path, row: dict[str, object], fieldnames: tuple[str, ...]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     exists = path.exists() and path.stat().st_size > 0
+    if exists:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            previous_fields = tuple(reader.fieldnames or ())
+            fieldnames = tuple(dict.fromkeys((*fieldnames, *previous_fields)))
+            if previous_fields != fieldnames:
+                # Upgrade old result files without assigning new provenance to
+                # historical rows. Unknown columns are preserved as well.
+                previous_rows = list(reader)
+            else:
+                previous_rows = None
+        if previous_rows is not None:
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            with temporary.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(previous_rows)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(path)
     with path.open("a", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         if not exists:
@@ -216,7 +287,7 @@ def setup_torch_device(device: str, seed: int) -> None:
 
 
 def instantiate_algorithm(
-    algorithm_class: type, problem: object, pop_size: int, **kwargs: object
+    algorithm_class: type, problem: object, fallback_pop_size: int, **kwargs: object
 ) -> object:
     """Instantiate an algorithm, falling back to ``(problem=..., pop_size=...)``.
 
@@ -228,7 +299,7 @@ def instantiate_algorithm(
         return algorithm_class(**kwargs)
     except TypeError as standard_error:
         try:
-            return algorithm_class(problem=problem, pop_size=pop_size)
+            return algorithm_class(problem=problem, pop_size=fallback_pop_size)
         except TypeError:
             raise standard_error
 

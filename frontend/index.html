@@ -398,6 +398,41 @@
             color: var(--success);
         }
 
+        .access-panel {
+            position: relative;
+            z-index: 20;
+            flex-shrink: 0;
+            padding: 12px 24px;
+            border-bottom: 1px solid var(--border);
+            background: var(--bg-panel);
+        }
+
+        .access-panel p {
+            margin: 0 0 8px;
+            color: var(--text-muted);
+        }
+
+        .access-form {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .access-form input {
+            width: min(340px, 100%);
+            padding: 10px 12px;
+            border: 1px solid var(--border-strong);
+            border-radius: 10px;
+            background: var(--bg-inset);
+            color: var(--text);
+            font: inherit;
+        }
+
+        .access-form button {
+            padding: 10px 16px;
+        }
+
         /* ==========================================================================
            6. BUTTONS
            ========================================================================== */
@@ -1413,6 +1448,16 @@
         </div>
     </header>
 
+    <section id="access-panel" class="access-panel hidden" aria-label="Backend connection">
+        <p id="access-message" role="status">Open the link printed by the backend, or paste its access token below.</p>
+        <form id="access-form" class="access-form">
+            <label for="access-token">Access token</label>
+            <input id="access-token" type="password" autocomplete="off" spellcheck="false"
+                aria-describedby="access-message" placeholder="Token from the backend startup link" required>
+            <button class="btn btn-primary" type="submit">Connect</button>
+        </form>
+    </section>
+
     <!-- ============================== MAIN ============================== -->
     <main id="main-container">
 
@@ -1438,7 +1483,7 @@
             <div class="editor-footer">
                 <p id="editor-hint" class="sr-only">Press Ctrl+Enter to run the pipeline.</p>
                 <div class="editor-actions">
-                    <button id="run-btn" class="btn btn-primary shimmer-btn run-btn" type="button">
+                    <button id="run-btn" class="btn btn-primary shimmer-btn run-btn" type="button" disabled>
                         <svg class="icon icon-lg"><use id="run-icon" href="#icon-play" /></svg>
                         <span class="btn-label">Run Agent</span>
                     </button>
@@ -1566,12 +1611,16 @@
         const MAX_LOG_LINES = 300;
         const RECONNECT_BASE_MS = 1000;   // first retry after 1s
         const RECONNECT_MAX_MS = 30000;   // cap backoff at 30s
+        const TOKEN_STORAGE_KEY = 'evococo-access-token';
 
         const state = {
             socket: null,
             reconnectAttempts: 0,
             pendingReconnect: null,
             manualStop: false,   // true after the user pressed Stop (suppresses alarm logs)
+            accessToken: '',
+            authenticated: false,
+            authenticationBlocked: false,
             isRunning: false
         };
 
@@ -1594,6 +1643,10 @@
 
         function isSocketOpen() {
             return !!(state.socket && state.socket.readyState === WebSocket.OPEN);
+        }
+
+        function isConnectionReady() {
+            return isSocketOpen() && state.authenticated;
         }
 
         function announce(msg) {
@@ -1831,6 +1884,57 @@
             return WS_FALLBACK_URL; // file:// or unknown origins
         }
 
+        function rememberAccessToken(token) {
+            state.accessToken = token;
+            try {
+                if (token) sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+                else sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+            } catch (err) { /* Keep the token in memory if session storage is unavailable. */ }
+        }
+
+        function initAccessToken() {
+            const fragment = new URLSearchParams(location.hash.slice(1));
+            let token = '';
+            if (fragment.has('token')) {
+                token = (fragment.get('token') || '').trim();
+                try {
+                    history.replaceState(null, '', location.pathname + location.search);
+                } catch (err) {
+                    location.hash = '';
+                }
+            } else {
+                try { token = (sessionStorage.getItem(TOKEN_STORAGE_KEY) || '').trim(); }
+                catch (err) { /* The connection form remains available. */ }
+            }
+            rememberAccessToken(token);
+        }
+
+        function showAccessPrompt(message, focus) {
+            document.getElementById('access-panel').classList.remove('hidden');
+            document.getElementById('access-message').textContent = message;
+            if (focus) document.getElementById('access-token').focus();
+        }
+
+        function submitAccessToken(e) {
+            e.preventDefault();
+            const input = document.getElementById('access-token');
+            const token = input.value.trim();
+            if (!token) {
+                showAccessPrompt('Paste the access token from the backend startup link.', true);
+                return;
+            }
+            rememberAccessToken(token);
+            input.value = '';
+            state.authenticationBlocked = false;
+            state.manualStop = false;
+            state.reconnectAttempts = 0;
+            const previousSocket = state.socket;
+            state.socket = null;
+            if (previousSocket) previousSocket.close();
+            showAccessPrompt('Connecting to the backend...');
+            connect();
+        }
+
         function clearPendingReconnect() {
             if (state.pendingReconnect) {
                 clearTimeout(state.pendingReconnect);
@@ -1840,6 +1944,7 @@
 
         function scheduleReconnect() {
             clearPendingReconnect();
+            if (state.authenticationBlocked || !state.accessToken) return;
             const delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, state.reconnectAttempts), RECONNECT_MAX_MS);
             state.reconnectAttempts += 1;
             state.pendingReconnect = setTimeout(function () {
@@ -1850,7 +1955,14 @@
 
         function connect() {
             clearPendingReconnect();
+            if (state.socket && state.socket.readyState !== WebSocket.CLOSED) return;
+            state.authenticated = false;
             updateConnection(false);
+            setRunButtonState(false);
+            if (state.authenticationBlocked || !state.accessToken) {
+                showAccessPrompt('Open the link printed by the backend, or paste its access token below.');
+                return;
+            }
 
             let sock;
             try {
@@ -1862,17 +1974,15 @@
             }
 
             state.socket = sock;
-            setRunButtonState(false); // disabled until the socket is OPEN
+            setRunButtonState(false); // disabled until the backend confirms authentication
 
             sock.onopen = function () {
-                state.reconnectAttempts = 0;
-                state.manualStop = false;
-                updateConnection(true);
-                log('SYSTEM: Secure bridge established.', 'log-ok');
-                setRunButtonState(false); // socket OPEN -> enable run
+                if (state.socket !== sock) return;
+                sock.send(JSON.stringify({ type: 'auth', token: state.accessToken }));
             };
 
             sock.onmessage = function (e) {
+                if (state.socket !== sock) return;
                 let data;
                 try {
                     data = JSON.parse(e.data);
@@ -1880,16 +1990,46 @@
                     log('SYSTEM: Malformed message received.', 'log-err');
                     return;
                 }
+                if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                    log('SYSTEM: Malformed message received.', 'log-err');
+                    return;
+                }
+                if (data.type === 'auth_ok') {
+                    if (state.authenticated || state.manualStop || !isSocketOpen()) return;
+                    state.authenticated = true;
+                    state.reconnectAttempts = 0;
+                    state.manualStop = false;
+                    document.getElementById('access-panel').classList.add('hidden');
+                    updateConnection(true);
+                    log('SYSTEM: Authenticated bridge established.', 'log-ok');
+                    setRunButtonState(state.isRunning);
+                    return;
+                }
+                if (!state.authenticated || state.manualStop) return;
                 handleMessage(data);
             };
 
             sock.onerror = function () {
+                if (state.socket !== sock) return;
                 log('SYSTEM: Node sync error detected.', 'log-err');
             };
 
-            sock.onclose = function () {
-                if (state.socket === sock) state.socket = null;
+            sock.onclose = function (e) {
+                if (state.socket !== sock) return;
+                state.socket = null;
+                state.authenticated = false;
                 updateConnection(false);
+                setRunButtonState(false);
+                if (e.code === 1008) {
+                    state.authenticationBlocked = true;
+                    state.manualStop = false;
+                    clearPendingReconnect();
+                    rememberAccessToken('');
+                    resetUI();
+                    showAccessPrompt('Access denied. Open the latest backend startup link, or enter its token again.', true);
+                    log('SYSTEM: Access denied. Enter the current backend access token to reconnect.', 'log-err');
+                    return;
+                }
                 if (state.manualStop) {
                     // User pressed Stop: the close was intentional — reconnect quietly.
                     state.manualStop = false;
@@ -1916,7 +2056,7 @@
             const btn = document.getElementById('run-btn');
             const use = document.getElementById('run-icon');
             const label = btn.querySelector('.btn-label');
-            btn.disabled = running || !isSocketOpen();
+            btn.disabled = running || !isConnectionReady();
             btn.setAttribute('aria-busy', String(running));
             use.setAttribute('href', running ? '#icon-sync' : '#icon-play');
             use.classList.toggle('icon-spin', running);
@@ -1943,8 +2083,8 @@
 
         function startPipeline() {
             if (state.isRunning) return;
-            if (!isSocketOpen()) {
-                log('WARNING: Engine is initializing. Please retry in a moment.', 'log-warn');
+            if (!isConnectionReady()) {
+                log('WARNING: Connect to the backend with its access token before running.', 'log-warn');
                 if (!state.socket || state.socket.readyState === WebSocket.CLOSED) scheduleReconnect();
                 return;
             }
@@ -1980,7 +2120,7 @@
                 (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) {
                 state.socket.close();
             }
-            log('TERMINATION: Manual override detected. Process killed.', 'log-danger');
+            log('TERMINATION: Stop requested. Closing the connection cancels the backend run.', 'log-danger');
             announce('Run stopped by user');
             resetUI();
         }
@@ -2014,6 +2154,13 @@
 
         function handleMessage(data) {
             const { type, title, message, step_id, is_success, extra_data } = data;
+
+            if (type === 'fatal') {
+                resetUI();
+                logLine(title || 'FATAL', message);
+                announce('Run failed');
+                return;
+            }
 
             if (type === 'log') {
                 logLine(title, message);
@@ -2316,6 +2463,13 @@
             document.getElementById('theme-btn').addEventListener('click', toggleTheme);
             document.getElementById('copy-btn').addEventListener('click', copyCurrentTab);
             document.getElementById('clear-logs-btn').addEventListener('click', clearTerminal);
+            document.getElementById('access-form').addEventListener('submit', submitAccessToken);
+
+            ['code', 'blueprint', 'ir'].forEach(function (tab) {
+                document.getElementById('tab-' + tab).addEventListener('click', function () {
+                    switchTab(tab);
+                });
+            });
 
             // Arrow-key navigation between tabs
             const tablist = document.getElementById('tablist');
@@ -2340,6 +2494,7 @@
             initResizers();
             bindEvents();
             switchTab('code');
+            initAccessToken();
             connect();
         }
 

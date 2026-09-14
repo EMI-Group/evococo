@@ -90,3 +90,8 @@ List helper functions called in MATLAB.
 * **`NDSort`**: [Standard or Custom?]
 * **`CrowdingDistance`**: [Standard or Custom?]
 * **`MyCustomHelper`**: [Does the logic require a specific helper?]
+
+## 9. Selection Semantics Contract
+Follow the supplied Selection Semantics Contract rules. Enumerate every selection
+site with source evidence, priorities, directions, tie rules and concrete winner
+examples. Keep the semantic priority order separate from SDK argument order.

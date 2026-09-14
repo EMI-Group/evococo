@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import json
 import logging
 import os
@@ -30,6 +29,7 @@ from .storage import (
     load_global_spec,
     load_rag_db,
     load_resource,
+    new_session_id,
     save_artifact,
 )
 
@@ -45,9 +45,6 @@ class JudgeResult(BaseModel):
     reasoning: str = Field(description="Detailed analysis of all branches.")
     winning_branch_id: int = Field(
         description="The integer ID of the branch that won the tournament (e.g. 0, 1, 2, 3, or 4)."
-    )
-    code: str = Field(
-        description="The FULL, UNMODIFIED Python code of the winning branch, no markdown ticks."
     )
 
 
@@ -114,6 +111,7 @@ async def run_single_branch_lifecycle(
         # STEP 4: CODER
         # =================================================
         coder_metrics = {}
+        branch_metrics["coder"] = coder_metrics
         current_code = await generate_llm_response(
             "4_coder.md",
             constraints=enhanced_constraints,
@@ -123,7 +121,6 @@ async def run_single_branch_lifecycle(
             temperature=current_temp,
             metrics_out=coder_metrics,
         )
-        branch_metrics["coder"] = coder_metrics
         current_code = _strip_code_fences(current_code)
 
         if run_dir:
@@ -152,13 +149,15 @@ async def run_single_branch_lifecycle(
 
             if i < MAX_STATIC_RETRIES:
                 static_metrics = {}
+                branch_metrics["static_fixes"].append(static_metrics)
                 current_code = await generate_llm_response(
                     "5_static_fixer.md",
                     error_log=error_msg,
                     previous_code=current_code,
+                    selection_semantics=constraints_str,
+                    blueprint_plan=blueprint_md,
                     metrics_out=static_metrics,
                 )
-                branch_metrics["static_fixes"].append(static_metrics)
                 current_code = _strip_code_fences(current_code)
             else:
                 await status_callback(
@@ -193,7 +192,7 @@ async def run_single_branch_lifecycle(
                 )
 
             if report["success"]:
-                if not report["has_nan"]:
+                if report["igd_history"] and not report["has_nonfinite"]:
                     best_igd_in_branch = report["last_igd"]
                     best_history = report["igd_history"]
 
@@ -215,12 +214,16 @@ async def run_single_branch_lifecycle(
                         "metrics": branch_metrics,
                     }
                 else:
-                    await status_callback("log", "ERR", f"[{L_TAG}] NaN Detected.")
+                    await status_callback(
+                        "log", "ERR", f"[{L_TAG}] Missing or non-finite IGD metrics."
+                    )
 
             if attempt < MAX_RUNTIME_RETRIES:
                 err_summary = report["stderr"]
-                if report["has_nan"]:
-                    err_summary = "Runtime Warning: NaN values detected."
+                if report["has_nonfinite"]:
+                    err_summary = "Runtime Warning: Non-finite IGD values detected."
+                elif report["success"] and not report["igd_history"]:
+                    err_summary = "Runtime Error: No IGD metrics were produced by the algorithm trial."
                 elif not report["success"] and not err_summary:
                     err_summary = f"Runtime Error: Execution failed. output: {report['stdout'][-200:]}"
 
@@ -229,6 +232,7 @@ async def run_single_branch_lifecycle(
                 await status_callback("log", "ERR", f"[{L_TAG}] Fix... ({short_err})")
 
                 runtime_metrics = {}
+                branch_metrics["runtime_fixes"].append(runtime_metrics)
                 current_code = await generate_llm_response(
                     "6_runtime_fixer.md",
                     constraints=constraints_str,
@@ -238,7 +242,6 @@ async def run_single_branch_lifecycle(
                     matlab_code=matlab_code,
                     metrics_out=runtime_metrics,
                 )
-                branch_metrics["runtime_fixes"].append(runtime_metrics)
                 current_code = _strip_code_fences(current_code)
             else:
                 await status_callback(
@@ -281,6 +284,8 @@ async def run_pipeline(matlab_code: str, status_callback):
     global_spec_content = load_global_spec()
     asset_lib_content = load_resource("resources_assets.md")
     few_shot_content = load_resource("resources_examples.md")
+    selection_semantics = load_resource("selection_semantics.md")
+    global_spec_content = f"{global_spec_content}\n\n{selection_semantics}"
 
     # Detect if the input MATLAB code is a PlatEMO classdef algorithm
     is_platemo = bool(
@@ -323,17 +328,13 @@ async def run_pipeline(matlab_code: str, status_callback):
         traceback.print_exc()
         run_dir = None
 
-    session_id = (
-        os.path.basename(run_dir)
-        if run_dir
-        else f"{datetime.datetime.now(datetime.timezone.utc).astimezone().strftime('%Y%m%d_%H%M%S')}_{algo_name}"
-    )
+    session_id = os.path.basename(run_dir) if run_dir else new_session_id(algo_name)
     perf_stats["session_id"] = session_id
 
     def save_perf_stats():
+        aggregate_stage_metrics(perf_stats)
         if not run_dir:
             return
-        aggregate_stage_metrics(perf_stats)
         save_artifact(run_dir, "performance_stats.json", perf_stats)
 
     if run_dir:
@@ -358,6 +359,7 @@ async def run_pipeline(matlab_code: str, status_callback):
         )
 
         analyst_metrics = {}
+        perf_stats["stages"]["analyst"] = analyst_metrics
         # [Modify] Inject reference_context into LLM request
         ir_md = await generate_llm_response(
             "1_analyst.md",
@@ -366,7 +368,6 @@ async def run_pipeline(matlab_code: str, status_callback):
             reference_context=reference_content,  # <--- Here is the injection point
             metrics_out=analyst_metrics,
         )
-        perf_stats["stages"]["analyst"] = analyst_metrics
 
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
@@ -396,6 +397,7 @@ async def run_pipeline(matlab_code: str, status_callback):
         all_rules_desc = "\n---\n".join(rules_context_list)
 
         rag_metrics = {}
+        perf_stats["stages"]["rag"] = rag_metrics
         rag_result = await generate_llm_response(
             "2_rag_selector.md",
             response_model=RagResult,
@@ -403,7 +405,6 @@ async def run_pipeline(matlab_code: str, status_callback):
             analyst_report=ir_md,
             metrics_out=rag_metrics,
         )
-        perf_stats["stages"]["rag"] = rag_metrics
         selected_bug_numbers = rag_result.selected_bug_numbers
 
         # ... (Rule matching logic) ...
@@ -435,6 +436,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                 seen_ids.add(r["id"])
 
         matched_rules_text = "\n".join(matched_rules_list)
+        branch_constraints = f"{matched_rules_text}\n\n{selection_semantics}"
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_result.model_dump())
 
@@ -458,13 +460,14 @@ async def run_pipeline(matlab_code: str, status_callback):
             step_id="architect",
         )
         architect_metrics = {}
+        perf_stats["stages"]["architect"] = architect_metrics
         blueprint_md = await generate_llm_response(
             "3_architect.md",
             rag_rules=matched_rules_text,
             analyst_report=ir_md,
+            selection_semantics=selection_semantics,
             metrics_out=architect_metrics,
         )
-        perf_stats["stages"]["architect"] = architect_metrics
         if run_dir:
             save_artifact(run_dir, "3_blueprint.md", blueprint_md)
         await status_callback("result_blueprint", "", blueprint_md)
@@ -491,20 +494,30 @@ async def run_pipeline(matlab_code: str, status_callback):
         tasks = []
         for i in range(NUM_BRANCHES):
             tasks.append(
-                run_single_branch_lifecycle(
-                    i,
-                    session_id,
-                    matlab_code,
-                    blueprint_md,
-                    matched_rules_text,
-                    asset_lib_content,
-                    few_shot_content,
-                    run_dir,
-                    status_callback,
+                asyncio.create_task(
+                    run_single_branch_lifecycle(
+                        i,
+                        session_id,
+                        matlab_code,
+                        blueprint_md,
+                        branch_constraints,
+                        asset_lib_content,
+                        few_shot_content,
+                        run_dir,
+                        status_callback,
+                    )
                 )
             )
 
-        results = await asyncio.gather(*tasks)
+        try:
+            results = await asyncio.shield(asyncio.gather(*tasks))
+        except asyncio.CancelledError:
+            # Cancel once, then wait for every branch to reap its child process.
+            # Shielding above prevents gather from cancelling them a second time.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
         perf_stats["stages"]["branches"] = []
         for res in results:
@@ -554,10 +567,10 @@ async def run_pipeline(matlab_code: str, status_callback):
         final_code = ""
 
         if not valid_candidates_exist:
+            perf_stats["status"] = "failed"
             await status_callback(
-                "log", "FAIL", "All branches failed. Fallback to Br0."
+                "log", "FAIL", "All branches failed. No validated output is available."
             )
-            final_code = results[0]["code"]
             await status_callback(
                 "step_done",
                 "Tournament Failed",
@@ -568,14 +581,30 @@ async def run_pipeline(matlab_code: str, status_callback):
         else:
             try:
                 judge_metrics = {}
+                perf_stats["stages"]["judge"] = judge_metrics
                 # 3. Send request strictly expecting JudgeResult JSON
                 judge_result = await generate_llm_response(
                     "7_selector.md",
                     response_model=JudgeResult,
                     candidates_list=candidates_json,
+                    selection_semantics=selection_semantics,
+                    blueprint_plan=blueprint_md,
                     metrics_out=judge_metrics,
                 )
-                perf_stats["stages"]["judge"] = judge_metrics
+
+                if not isinstance(judge_result, JudgeResult):
+                    raise TypeError("Judge did not return a valid selection")
+                selected = next(
+                    (
+                        r
+                        for r in results
+                        if r["branch_idx"] == judge_result.winning_branch_id
+                        and r["success"]
+                    ),
+                    None,
+                )
+                if selected is None:
+                    raise ValueError("Judge selected an unknown or failed branch")
 
                 if run_dir:
                     save_artifact(
@@ -586,7 +615,8 @@ async def run_pipeline(matlab_code: str, status_callback):
                 # [Core Logic] Clean Extractions
                 # =========================================================
                 reasoning = judge_result.reasoning
-                final_code = judge_result.code
+                final_code = selected["code"]
+                perf_stats["winning_branch_id"] = selected["branch_idx"]
                 # =========================================================
 
                 # [LOG] Live judge verdict
@@ -615,6 +645,7 @@ async def run_pipeline(matlab_code: str, status_callback):
 
             # Intentional: judge failure is a fallback boundary -> pick best successful branch
             except Exception as e:  # noqa: BLE001
+                judge_result = None
                 await status_callback("log", "ERR", f"Judge Failed: {e}. Fallback.")
                 best_res = min(
                     [r for r in results if r["success"]],
@@ -622,6 +653,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                     default=results[0],
                 )
                 final_code = best_res["code"]
+                perf_stats["winning_branch_id"] = best_res["branch_idx"]
 
                 await status_callback(
                     "step_done",
@@ -630,6 +662,8 @@ async def run_pipeline(matlab_code: str, status_callback):
                     step_id="selector",
                     is_success=True,
                 )
+
+        perf_stats["status"] = "completed" if valid_candidates_exist else "failed"
 
         # Save performance statistics and log summary
         try:
@@ -653,21 +687,24 @@ async def run_pipeline(matlab_code: str, status_callback):
         if run_dir:
             save_artifact(run_dir, "PERFORMANCE_STATS.txt", stats_report)
 
-        await status_callback("result_code", "Final Optimized Code", final_code)
-        if run_dir:
-            save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)
+        if valid_candidates_exist:
+            await status_callback("result_code", "Final Optimized Code", final_code)
+            if run_dir:
+                save_artifact(run_dir, "FINAL_OUTPUT.py", final_code)
 
         await status_callback(
             "step_done",
-            "Success",
-            "Pipeline Complete!",
+            "Success" if valid_candidates_exist else "Failed",
+            "Pipeline Complete!" if valid_candidates_exist else "No valid candidates.",
             step_id="finish",
-            is_success=True,
+            is_success=valid_candidates_exist,
         )
         return perf_stats
 
     # Intentional: outer pipeline crash boundary -> save diagnostics and report fatal
     except Exception as e:  # noqa: BLE001
+        perf_stats["status"] = "failed"
+        perf_stats["error"] = str(e)
         print(">>> [ERROR] Pipeline Crashed:")
         traceback.print_exc()
         try:
@@ -680,3 +717,4 @@ async def run_pipeline(matlab_code: str, status_callback):
         if run_dir:
             save_artifact(run_dir, "FATAL_ERROR.txt", traceback.format_exc())
         await status_callback("fatal", "System Error", str(e))
+        return perf_stats

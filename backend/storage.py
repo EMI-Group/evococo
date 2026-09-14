@@ -11,6 +11,7 @@ import datetime
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 
 from .config import (
@@ -67,15 +68,20 @@ def load_resource(filename):
     return ""
 
 
-def ensure_history_dir(algo_name="UnknownAlgo"):
-    """Ensure history directory exists, and return independent timestamp directory for current run"""
-    os.makedirs(HISTORY_DIR, exist_ok=True)
+def new_session_id(algo_name="UnknownAlgo"):
+    """Allocate a unique namespace even for simultaneous runs of one algorithm."""
     timestamp = (
         datetime.datetime.now(datetime.timezone.utc)
         .astimezone()
         .strftime("%Y%m%d_%H%M%S")
     )
-    run_dir = os.path.join(HISTORY_DIR, f"{timestamp}_{algo_name}")
+    return f"{timestamp}_{algo_name}_{uuid.uuid4().hex}"
+
+
+def ensure_history_dir(algo_name="UnknownAlgo"):
+    """Create an independent artifact directory for the current run."""
+    os.makedirs(HISTORY_DIR, exist_ok=True)
+    run_dir = os.path.join(HISTORY_DIR, new_session_id(algo_name))
     os.makedirs(run_dir)
 
     # Trigger global history cleanup

@@ -63,6 +63,14 @@ The output directory contains:
 Successful trials are resumable. Failed and timed-out trials are retained in `trials.csv` and
 retried on the next invocation.
 
+Resume and summary groups distinguish the algorithm's absolute file path, source SHA-256,
+CPU/CUDA device, and physical GPU index, in addition to the trial parameters. Changing the code
+or device therefore starts new trials in the same output directory. These identity fields are
+included in `summary.csv` so results from different versions or devices remain separate.
+Existing CSV files are upgraded without deleting historical rows; rows written before source
+fingerprints were recorded are retained in `trials.csv` but excluded from resume and summaries.
+The same rules apply to the computational-scaling benchmark below.
+
 ### Optional PlatEMO comparison
 
 The repository includes `run_platemo_optimization_fidelity_benchmark.m` for generating the
@@ -76,6 +84,13 @@ It runs the same 48 algorithm names on DTLZ, WFG, LSMOP, and MaF over 21 seeds a
 `evaluation_results/platemo_fidelity/platemo_reference.csv`. Reference rows include `ValidRuns`
 and `ExpectedRuns`; the Python evaluator only uses complete PlatEMO references. Per-generation
 objectives and IGD are written as one JSON object per line under `per_generation_jsonl/`.
+
+The MATLAB fidelity smoke test (`EVOCOCO_MATLAB_SMOKE_TEST=1`) writes to
+`evaluation_results/platemo_fidelity_smoke/` by default. Each fidelity output directory records
+its population size, generation budget, objective count, and smoke/full mode in
+`benchmark_protocol.json`. Reusing an explicit `EVOCOCO_EVALUATION_OUTPUT_DIR` with a different
+protocol is rejected before trials run. Existing MATLAB result directories without this metadata
+are preserved but cannot be resumed safely; select a new output directory for a fresh benchmark.
 
 Pass a reference summary to classify the generated mean IGD:
 

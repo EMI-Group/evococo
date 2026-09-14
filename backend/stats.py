@@ -45,8 +45,8 @@ def format_stats_header(perf_stats, judge_result=None):
     """Build the performance report saved separately from the final code.
 
     `judge_result` is the JudgeResult model when the judge step succeeded,
-    or None otherwise. The judge-status line and winning-branch line only
-    appear when the judge succeeded.
+    or None otherwise. The winning branch is read from perf_stats, including
+    when the pipeline selected it through the deterministic fallback.
     """
     stats_header = (
         "# ==============================================================================\n"
@@ -111,7 +111,7 @@ def format_stats_header(perf_stats, judge_result=None):
         judge_status = "SUCCESS" if judge_result is not None else "FAILED (Fallback)"
         stats_header += f"#   - Judge/Selector: {judge_status} | Latency: {j.get('latency', 0.0):.2f}s | Tokens: {j.get('total_tokens', 0):,} (Prompt: {j.get('prompt_tokens', 0):,}, Completion: {j.get('completion_tokens', 0):,})\n"
 
-    winner_id = judge_result.winning_branch_id if judge_result is not None else None
+    winner_id = perf_stats.get("winning_branch_id")
     if winner_id is not None:
         strat_name = STRATEGIES_SHORT[winner_id % len(STRATEGIES_SHORT)]
         stats_header += f"# Winning Branch: {winner_id} (Strategy: {strat_name})\n"

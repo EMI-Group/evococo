@@ -22,12 +22,16 @@ from _common import (
     DEFAULT_ALGORITHM_DIR,
     DEFAULT_SCALING_OUTPUT_DIR,
     RESULT_PREFIX_SCALING,
+    TRIAL_IDENTITY_FIELDS,
+    algorithm_identity,
     append_row,
     check_cuda,
     discover_algorithms,
+    has_trial_identity,
     positive_int,
     read_rows,
     run_worker_process,
+    trial_identity_key,
 )
 
 WORKER = Path(__file__).with_name("_scaling_trial.py")
@@ -36,6 +40,7 @@ DIMENSION_SIZES = (1024, 2048, 4096, 8192, 16384, 32768, 65536)
 RAW_FIELDS = (
     "algorithm",
     "algorithm_file",
+    "algorithm_sha256",
     "scaling",
     "size",
     "pop_size",
@@ -53,6 +58,7 @@ RAW_FIELDS = (
     "igd",
     "final_population_size",
     "device",
+    "gpu",
     "error",
 )
 SUMMARY_FIELDS = (
@@ -84,6 +90,7 @@ SUMMARY_FIELDS = (
     "speedup_x",
     "timeout_lower_bound_pairs",
     "timeout_lower_bound_speedup_x",
+    *TRIAL_IDENTITY_FIELDS,
 )
 
 
@@ -188,6 +195,22 @@ def trial_key(row: dict[str, str]) -> tuple[object, ...]:
         int(row["generations"]),
         int(row["warmup"]),
         int(row["recompile_limit"]),
+        *trial_identity_key(row),
+    )
+
+
+def summary_key(row: dict[str, str]) -> tuple[object, ...]:
+    return (
+        row["algorithm"],
+        row["scaling"],
+        int(row["size"]),
+        int(row["pop_size"]),
+        int(row["dimension"]),
+        int(row["objectives"]),
+        int(row["generations"]),
+        int(row["warmup"]),
+        int(row["recompile_limit"]),
+        *trial_identity_key(row),
     )
 
 
@@ -323,17 +346,9 @@ def write_summary(
     successful: dict[tuple[object, ...], dict[str, str]] = {}
     groups: set[tuple[object, ...]] = set()
     for row in rows:
-        group = (
-            row["algorithm"],
-            row["scaling"],
-            int(row["size"]),
-            int(row["pop_size"]),
-            int(row["dimension"]),
-            int(row["objectives"]),
-            int(row["generations"]),
-            int(row["warmup"]),
-            int(row["recompile_limit"]),
-        )
+        if not has_trial_identity(row):
+            continue
+        group = summary_key(row)
         groups.add(group)
         if row["status"] == "success":
             successful[trial_key(row)] = row
@@ -352,38 +367,17 @@ def write_summary(
             generations,
             warmup,
             recompile_limit,
-        ) = group
+        ) = group[:9]
+        identity = dict(zip(TRIAL_IDENTITY_FIELDS, group[9:]))
         eager = {
             (int(row["repeat"]), int(row["seed"])): row
             for row in successful.values()
-            if (
-                row["algorithm"] == algorithm
-                and row["scaling"] == scaling
-                and int(row["size"]) == size
-                and int(row["pop_size"]) == pop_size
-                and int(row["dimension"]) == dimension
-                and int(row["objectives"]) == objectives
-                and int(row["generations"]) == generations
-                and int(row["warmup"]) == warmup
-                and int(row["recompile_limit"]) == recompile_limit
-                and row["execution"] == "eager"
-            )
+            if summary_key(row) == group and row["execution"] == "eager"
         }
         compiled = {
             (int(row["repeat"]), int(row["seed"])): row
             for row in successful.values()
-            if (
-                row["algorithm"] == algorithm
-                and row["scaling"] == scaling
-                and int(row["size"]) == size
-                and int(row["pop_size"]) == pop_size
-                and int(row["dimension"]) == dimension
-                and int(row["objectives"]) == objectives
-                and int(row["generations"]) == generations
-                and int(row["warmup"]) == warmup
-                and int(row["recompile_limit"]) == recompile_limit
-                and row["execution"] == "compile"
-            )
+            if summary_key(row) == group and row["execution"] == "compile"
         }
         eager_compile_pairs = sorted(set(eager) & set(compiled))
         all_eager_times = [
@@ -484,6 +478,7 @@ def write_summary(
                 "speedup_x": paper_speedup,
                 "timeout_lower_bound_pairs": len(timeout_pairs) if baseline else "",
                 "timeout_lower_bound_speedup_x": optional_mean(timeout_lower_bounds),
+                **identity,
             }
         )
 
@@ -533,7 +528,9 @@ def main() -> int:
     raw_path = output_dir / "trials.csv"
     summary_path = output_dir / "summary.csv"
     completed_keys = {
-        trial_key(row) for row in read_rows(raw_path) if row.get("status") == "success"
+        trial_key(row)
+        for row in read_rows(raw_path)
+        if row.get("status") == "success" and has_trial_identity(row)
     }
     total = len(algorithms) * len(sizes) * args.repeats * len(modes)
     skipped = 0
@@ -559,6 +556,9 @@ def main() -> int:
                 for repeat in range(1, args.repeats + 1):
                     seed = args.seed_base + repeat - 1
                     for execution in modes:
+                        identity = algorithm_identity(
+                            algorithm_file, args.device, args.gpu
+                        )
                         key = (
                             algorithm_file.stem,
                             args.scaling,
@@ -572,6 +572,7 @@ def main() -> int:
                             args.generations,
                             args.warmup,
                             args.recompile_limit,
+                            *trial_identity_key(identity),
                         )
                         if key in completed_keys:
                             skipped += 1
@@ -614,8 +615,11 @@ def main() -> int:
                             "device": args.device,
                             "error": "",
                             **result,
+                            **identity,
                         }
                         append_row(raw_path, row, RAW_FIELDS)
+                        if row["status"] == "success":
+                            completed_keys.add(key)
                         print(format_result(row), flush=True)
                     write_summary(
                         raw_path,

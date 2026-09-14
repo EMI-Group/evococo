@@ -9,6 +9,8 @@ import re
 import sys
 import uuid
 
+from _common import inject_module_prelude
+
 # Reconfigure the console to UTF-8 with replacement errors before importing
 # backend.executor: backend/config.py prints a warning emoji at import time,
 # which would raise UnicodeEncodeError on GBK Windows consoles and break even
@@ -165,10 +167,11 @@ async def main():
             exec_time = -1.0
 
             if syntax_pass:
-                # Prepend global torch.compile bypass and set threads to 1 to avoid JIT compilation overhead, hangs, and CPU thrashing
-                modified_code = (
-                    "import torch\ntorch.set_num_threads(1)\ntorch.compile = lambda fn, *args, **kwargs: fn\n"
-                    + code
+                # Keep future imports valid while configuring the benchmark
+                # before any algorithm definitions or demo code execute.
+                modified_code = inject_module_prelude(
+                    code,
+                    "import torch\ntorch.set_num_threads(1)\ntorch.compile = lambda fn, *args, **kwargs: fn\n",
                 )
                 if not re.search(
                     r"""if\s+__name__\s*==\s*["']__main__["']\s*:""", code
@@ -204,14 +207,8 @@ async def main():
 
                 # Override with absolute IGD threshold (< 0.25) for convergence on DTLZ2
                 igds = report.get("igd_history", [])
-                optim_pass = len(igds) >= 2 and igds[-1] < 0.25
-
-                if exec_pass and report.get("has_nan", False):
-                    exec_pass = False  # Marked failure if NaNs heavily persist
-
-                # If it successfully converged, it executed properly
-                if optim_pass and final_igd != float("inf"):
-                    exec_pass = True
+                exec_pass = exec_pass and not report.get("has_nonfinite", False)
+                optim_pass = exec_pass and len(igds) >= 2 and igds[-1] < 0.25
 
             async with write_lock:
                 results.append(

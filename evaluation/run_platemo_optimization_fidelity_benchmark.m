@@ -137,12 +137,8 @@ end
 %% Output files
 script_dir = fileparts(mfilename('fullpath'));
 result_dir = getenv('EVOCOCO_EVALUATION_OUTPUT_DIR');
-if isempty(result_dir)
-    result_dir = fullfile(script_dir, '..', 'evaluation_results', 'platemo_fidelity');
-end
-if ~exist(result_dir, 'dir')
-    mkdir(result_dir);
-end
+result_dir = prepare_platemo_fidelity_output(script_dir, result_dir, ...
+    smoke_test, population_size, generations, num_objectives);
 
 raw_csv = fullfile(result_dir, 'platemo_trials.csv');
 failure_csv = fullfile(result_dir, 'platemo_failures.csv');

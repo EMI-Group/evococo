@@ -125,10 +125,17 @@ Start the backend from the project root:
 python -m uvicorn backend.main:app --reload --reload-dir backend --port 8000
 ```
 
-The backend health endpoint will be available at <http://localhost:8000>.
+Open the launch URL printed in the backend terminal, such as
+`http://localhost:8000/#token=...`. The backend serves the frontend and generates a private
+connection token at startup. The browser keeps the token for this tab's session and authenticates
+before starting a run. The health endpoint is available at <http://localhost:8000/health>.
 
-Open [`frontend/index.html`](frontend/index.html) in a browser. The frontend connects to the local
-backend over WebSocket. Paste the MATLAB source code into the input panel and click **Run**. The
+You can also open [`frontend/index.html`](frontend/index.html) directly and enter the connection
+token from the terminal. Set `EVOCOCO_WS_TOKEN` in `.env` to keep the same token across backend
+restarts. If serving the frontend from another origin, add its exact origin to
+`EVOCOCO_ALLOWED_ORIGINS` (comma-separated). Adjust the launch URL's port if necessary.
+
+Paste the MATLAB source code into the input panel and click **Run**. The
 interface displays every pipeline stage and returns the selected Python implementation when the
 tournament finishes.
 

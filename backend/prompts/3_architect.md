@@ -12,6 +12,9 @@ Your goal is to transform the abstract logic from the Analyst Report into a conc
 2.  **RAG Constraints (Compliance)**:
 {rag_rules}
 
+3. **Selection Semantics Contract Rules**:
+{selection_semantics}
+
 ## Core Responsibilities
 1.  **State Architecture**: Decide which variables persist (using `evox.Mutable`) vs which are temporary.
 2.  **Tensor Algebra (NO PYTHON LOOPS)**: Explicitly design the PyTorch broadcasting (`N x 1 x D - 1 x N x D`), `bmm`, `einsum`, or boolean filter masking (`torch.where(mask)`) logic to replace element-wise MATLAB operations.
@@ -84,3 +87,9 @@ Check the **RAG Constraints**. If a rule (e.g., Bug #7 or #17) explicitly requir
 ## 5. Compliance Checklist
 Copy the key rules from RAG Constraints that the Coder **MUST** see.
 * [Rule ID]: [Instruction]
+
+## 6. Selection Semantics Contract
+Copy the Analyst's per-site semantic priorities and directions. For each site,
+specify the exact target API call, including key order and signs, and the expected
+winners for the stated examples. For EvoX multi-key tournament and lexsort, the
+last key is primary. Do not copy MATLAB argument order directly into these APIs.

@@ -51,11 +51,6 @@ async def process_file(
 
     async def process_run(run_idx: int) -> None:
         async with repeat_semaphore:
-            # History directories currently use second-resolution timestamps.
-            # Stagger concurrent repeats so each EvoCoCo pipeline gets an
-            # independent run_history directory and executor session namespace.
-            if repeat_concurrency > 1:
-                await asyncio.sleep((run_idx - 1) * 1.1)
             await run_one(run_idx)
 
     async def run_one(run_idx: int) -> None:
@@ -66,10 +61,15 @@ async def process_file(
             out_file = output_dir / f"{algo_name}_run{run_idx}.py"
             stats_file = output_dir / f"{algo_name}_run{run_idx}_stats.json"
             if out_file.exists() and stats_file.exists():
-                print(
-                    f"\n--- Run {run_idx}/{num_repeats} for {algo_name} already exists, skipping ---"
-                )
-                return
+                try:
+                    previous = await asyncio.to_thread(read_json, stats_file)
+                except (OSError, ValueError):
+                    previous = {}
+                if previous.get("status") == "completed":
+                    print(
+                        f"\n--- Run {run_idx}/{num_repeats} for {algo_name} already exists, skipping ---"
+                    )
+                    return
 
         print(f"\n--- Run {run_idx}/{num_repeats} for {algo_name} ---")
 
@@ -103,10 +103,11 @@ async def process_file(
             run_finished_at = datetime.now().astimezone()
             if stats_data is None:
                 stats_data = {}
+            succeeded = stats_data.get("status") == "completed" and bool(
+                final_code_captured
+            )
             stats_data["batch_run"] = {
-                "status": "completed"
-                if final_code_captured
-                else "completed_without_code",
+                "status": "completed" if succeeded else "failed",
                 "algorithm": algo_name,
                 "run_index": run_idx,
                 "source_path": os.path.abspath(file_path),
@@ -118,7 +119,7 @@ async def process_file(
             if output_dir:
                 output_dir.mkdir(parents=True, exist_ok=True)
 
-                if final_code_captured:
+                if succeeded:
                     out_file = output_dir / f"{algo_name}_run{run_idx}.py"
                     await asyncio.to_thread(
                         out_file.write_text, final_code_captured[0], encoding="utf-8"

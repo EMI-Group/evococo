@@ -34,7 +34,7 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 2. **NO CPU-GPU Sync**: Do NOT use `.item()` or `.tolist()` in the main execution paths. This forces the GPU to halt and wait for the CPU.
 3. **NO Dynamic Lists Extraction**: Do NOT use `selected_indices = []` and `extend()`. Operations must stay in Tensor space.
 4. **NO Iterative Selection (While loop peeling)**: Do NOT write `while len(selected) < N:` to iteratively pick fronts.
-    * **✅ GOOD (Lexsort)**: Calculate all metrics (e.g., Rank, Crowding Distance) simultaneously for **all** individuals. Then use `evox.utils.lexsort` or compound scoring (`Rank - CD * 1e-4`) with `torch.argsort` to rank all individuals in one single operation. Slice the top `self.pop = pop[sorted_idx[:N]]`.
+    * **✅ GOOD (Lexsort)**: Calculate the required metrics, then use `evox.utils.lexsort` with keys ordered from lowest to highest priority. For rank ascending followed by crowding descending, use keys `[-CD, Rank]`. Do NOT substitute a weighted score such as `Rank - CD * 1e-4`: it changes lexicographic priority, especially for infinite crowding. Slice `self.pop = pop[sorted_idx[:N]]` only when this preserves the source selection semantics.
 5. **NO Numpy**: Use `torch` exclusively unless absolutely necessary.
 
 ## 5. Required Tensorization Paradigms

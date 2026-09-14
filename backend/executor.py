@@ -18,6 +18,42 @@ from .config import (
 os.makedirs(BASE_WORKSPACE_DIR, exist_ok=True)
 
 
+async def _run_subprocess(cmd, *, cwd, timeout):
+    """Reap the child before returning, including on timeout or cancellation."""
+    # Popen also works on Windows selector loops used by some ASGI servers.
+    # Shield process creation so cancellation cannot lose a just-started child.
+    spawning = asyncio.create_task(
+        asyncio.to_thread(
+            subprocess.Popen,
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+        )
+    )
+    try:
+        process = await asyncio.shield(spawning)
+    except asyncio.CancelledError:
+        process = await spawning
+        if process.poll() is None:
+            process.kill()
+        await asyncio.to_thread(process.communicate)
+        raise
+
+    communicating = asyncio.create_task(asyncio.to_thread(process.communicate))
+    try:
+        stdout, stderr = await asyncio.wait_for(asyncio.shield(communicating), timeout)
+    except (asyncio.CancelledError, asyncio.TimeoutError):
+        if process.poll() is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        await communicating
+        raise
+    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+
+
 def _write_text_file(path: str, content: str) -> None:
     """Write text content to a file (run via asyncio.to_thread in async contexts)."""
     with open(path, "w", encoding="utf-8") as f:
@@ -103,21 +139,12 @@ async def check_syntax_with_ruff(
             "--no-cache",
         ]
 
-        def run_ruff():
-            return subprocess.run(
-                cmd,
-                capture_output=True,
-                cwd=workspace,
-                timeout=5,
-                check=False,
-            )
-
         try:
-            result = await asyncio.to_thread(run_ruff)
+            result = await _run_subprocess(cmd, cwd=workspace, timeout=5)
             stdout_str = result.stdout.decode(errors="replace") if result.stdout else ""
             stderr_str = result.stderr.decode(errors="replace") if result.stderr else ""
             returncode = result.returncode
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             return False, "System Error: Ruff check timed out."
 
         if returncode == 0:
@@ -137,7 +164,11 @@ async def check_syntax_with_ruff(
 
 
 async def execute_code(
-    code_str: str, session_id: str | None = None, filename="algo_script.py"
+    code_str: str,
+    session_id: str | None = None,
+    filename="algo_script.py",
+    *,
+    validate_fitness: bool = False,
 ):
     """Run generated code in an isolated workspace and return its output."""
     if not session_id:
@@ -152,22 +183,17 @@ async def execute_code(
         return False, "", f"System Error: Failed to write file - {e!s}"
 
     try:
-
-        def run_script():
-            return subprocess.run(
-                [sys.executable, filename],
-                capture_output=True,
-                cwd=workspace,
-                timeout=60,
-                check=False,
-            )
-
         try:
-            result = await asyncio.to_thread(run_script)
+            if validate_fitness:
+                runner = os.path.join(os.path.dirname(__file__), "trial_runner.py")
+                cmd = [sys.executable, runner, filename]
+            else:
+                cmd = [sys.executable, filename]
+            result = await _run_subprocess(cmd, cwd=workspace, timeout=60)
             stdout_str = result.stdout.decode(errors="replace") if result.stdout else ""
             stderr_str = result.stderr.decode(errors="replace") if result.stderr else ""
             returncode = result.returncode
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             return (
                 False,
                 "",
@@ -186,9 +212,12 @@ async def execute_code(
 def parse_igd_from_stdout(stdout: str) -> list[float]:
     """Extract IGD values from standard output"""
     igds = []
-    matches = re.findall(r"IGD:\s*([+-]?([0-9]*[.])?[0-9]+|nan)", stdout, re.IGNORECASE)
-    for m in matches:
-        val_str = m[0]
+    matches = re.findall(
+        r"\bIGD:\s*([+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|inf(?:inity)?|nan))(?![\w.])",
+        stdout,
+        re.IGNORECASE,
+    )
+    for val_str in matches:
         try:
             if "nan" in val_str.lower():
                 val = float("nan")
@@ -216,20 +245,21 @@ async def execute_code_trial(
 ) -> dict:
     """Advanced trial run function: execute code and analyze convergence metrics"""
     start_time = time.time()
-    success, output, error = await execute_code(code_str, session_id, filename)
+    success, output, error = await execute_code(
+        code_str, session_id, filename, validate_fitness=True
+    )
     duration = time.time() - start_time
 
     igds = parse_igd_from_stdout(output)
-    has_nan = "nan" in output.lower()
+    has_nan = any(math.isnan(v) for v in igds)
+    has_nonfinite = any(not math.isfinite(v) for v in igds)
 
     last_igd = float("inf")
     if igds:
-        valid_igds = [v for v in igds if not math.isnan(v)]
-        if valid_igds:
-            last_igd = valid_igds[-1]
+        last_igd = igds[-1]
 
     is_converging = False
-    if len(igds) >= 2 and igds[-1] < igds[0]:
+    if len(igds) >= 2 and not has_nonfinite and igds[-1] < igds[0]:
         is_converging = True
 
     exec_time = parse_exec_time_from_stdout(output)
@@ -241,6 +271,7 @@ async def execute_code_trial(
         "last_igd": last_igd,
         "igd_history": igds,
         "has_nan": has_nan,
+        "has_nonfinite": has_nonfinite,
         "is_converging": is_converging,
         "duration": duration,
         "exec_time": exec_time,

@@ -42,7 +42,10 @@ from evomo.operators.selection import (
 #   parent_idx = tournament_selection(n_round=pop_size, fitness=fit, tournament_size=2)
 #   parents = pop[parent_idx]
 #
-#   # Multi-objective / multi-criteria tournament (lexicographic on stacked fitnesses)
+#   # Multi-criteria tournament: LAST key is primary; all keys are minimized.
+#   # Rank first (minimize), crowding second (maximize):
+#   parent_idx = tournament_selection_multifit(n_round=pop_size, fitnesses=[-crowding, rank], tournament_size=2)
+#   # General ordering: f3 is primary, f2 secondary, f1 tertiary.
 #   parent_idx = tournament_selection_multifit(n_round=pop_size, fitnesses=[f1, f2, f3], tournament_size=2)
 #   parents = pop[parent_idx]
 #   # Crowding distance calculation for a given front (mask is boolean)

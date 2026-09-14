@@ -51,6 +51,12 @@ The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN ST
 6. **Semantic Preservation**:
    - Do NOT alter algorithmic intent. Only fix the minimal root cause of the crash.
    - Do NOT silence errors by skipping computation steps. All originally intended computations must still occur.
+   - Preserve the Blueprint's Selection Semantics Contract at every selection site.
+     EvoX multi-key tournament and lexsort use the LAST key as primary. For
+     rank-first selection use `[-crowding, rank]`, including after repairing a
+     stacked-Tensor/list type error. Keep the priority comment next to the call.
+   - Verify the declared winner examples by reasoning about the repaired call;
+     do not claim they were executed. Do not swap priorities to improve IGD.
 
 ### Output Format
 You must provide an **Analysis Block** followed by the **FULL Corrected Code**.

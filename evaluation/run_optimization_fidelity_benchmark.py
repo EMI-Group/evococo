@@ -15,18 +15,23 @@ from _benchmark_problems import ALL_PROBLEMS, PROBLEM_SUITES, suite_problems
 from _common import (
     DEFAULT_FIDELITY_OUTPUT_DIR,
     RESULT_PREFIX_FIDELITY,
+    TRIAL_IDENTITY_FIELDS,
+    algorithm_identity,
     append_row,
     check_cuda,
     discover_algorithms,
+    has_trial_identity,
     positive_int,
     read_rows,
     run_worker_process,
+    trial_identity_key,
 )
 
 WORKER = Path(__file__).with_name("_fidelity_trial.py")
 RAW_FIELDS = (
     "algorithm",
     "algorithm_file",
+    "algorithm_sha256",
     "problem",
     "run",
     "seed",
@@ -40,6 +45,7 @@ RAW_FIELDS = (
     "final_population_size",
     "dimension",
     "device",
+    "gpu",
     "error",
 )
 SUMMARY_FIELDS = (
@@ -60,6 +66,7 @@ SUMMARY_FIELDS = (
     "igd_difference",
     "relative_igd_increase",
     "classification",
+    *TRIAL_IDENTITY_FIELDS,
 )
 
 
@@ -140,6 +147,7 @@ def trial_key(row: dict[str, str]) -> tuple[object, ...]:
         int(row["generations"]),
         int(row["objectives"]),
         row["execution"],
+        *trial_identity_key(row),
     )
 
 
@@ -236,6 +244,8 @@ def write_summary(
 ) -> None:
     grouped: dict[tuple[object, ...], dict[int, dict[str, str]]] = {}
     for row in read_rows(raw_path):
+        if not has_trial_identity(row):
+            continue
         seed = int(row["seed"])
         if seed not in expected_seeds:
             continue
@@ -246,6 +256,7 @@ def write_summary(
             int(row["generations"]),
             int(row["objectives"]),
             row["execution"],
+            *trial_identity_key(row),
         )
         if row["status"] == "success":
             grouped.setdefault(group, {})[seed] = row
@@ -256,7 +267,8 @@ def write_summary(
     for group in sorted(
         grouped, key=lambda item: (str(item[0]).casefold(), str(item[1]))
     ):
-        algorithm, problem, pop_size, generations, objectives, execution = group
+        algorithm, problem, pop_size, generations, objectives, execution = group[:6]
+        identity = dict(zip(TRIAL_IDENTITY_FIELDS, group[6:]))
         successes = grouped[group]
         igds = [float(row["igd"]) for row in successes.values()]
         runtimes = [float(row["runtime_s"]) for row in successes.values()]
@@ -298,6 +310,7 @@ def write_summary(
                 "igd_difference": difference,
                 "relative_igd_increase": relative_increase,
                 "classification": classification,
+                **identity,
             }
         )
 
@@ -327,7 +340,9 @@ def main() -> int:
     seeds = [args.seed_base + offset for offset in range(args.runs)]
     expected_seeds = set(seeds)
     completed = {
-        trial_key(row) for row in read_rows(raw_path) if row.get("status") == "success"
+        trial_key(row)
+        for row in read_rows(raw_path)
+        if row.get("status") == "success" and has_trial_identity(row)
     }
     total = len(algorithms) * len(args.problems) * len(seeds)
     attempted = 0
@@ -347,6 +362,7 @@ def main() -> int:
         for algorithm_file in algorithms:
             for problem in args.problems:
                 for run, seed in enumerate(seeds, start=1):
+                    identity = algorithm_identity(algorithm_file, args.device, args.gpu)
                     key = (
                         algorithm_file.stem,
                         problem,
@@ -355,6 +371,7 @@ def main() -> int:
                         args.generations,
                         args.objectives,
                         args.execution,
+                        *trial_identity_key(identity),
                     )
                     if key in completed:
                         skipped += 1
@@ -384,9 +401,11 @@ def main() -> int:
                         "device": args.device,
                         "error": "",
                         **result,
+                        **identity,
                     }
                     append_row(raw_path, row, RAW_FIELDS)
                     if row["status"] == "success":
+                        completed.add(key)
                         print(
                             f"IGD={float(row['igd']):.6g}, "
                             f"time={float(row['runtime_s']):.3f}s"
