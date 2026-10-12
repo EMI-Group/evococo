@@ -19,6 +19,14 @@ def aggregate_stage_metrics(perf_stats):
     """
     perf_stats["total_tokens"] = {"prompt": 0, "completion": 0, "total": 0}
     perf_stats["total_llm_time"] = 0.0
+    input_cache = {
+        "cached_input_tokens": None,
+        "uncached_input_tokens": None,
+        "reported_prompt_tokens": 0,
+        "unreported_prompt_tokens": 0,
+        "hit_rate": None,
+    }
+    perf_stats["input_cache"] = input_cache
 
     def add_metrics(m):
         if m:
@@ -26,6 +34,18 @@ def aggregate_stage_metrics(perf_stats):
             perf_stats["total_tokens"]["completion"] += m.get("completion_tokens", 0)
             perf_stats["total_tokens"]["total"] += m.get("total_tokens", 0)
             perf_stats["total_llm_time"] += m.get("latency", 0.0)
+            cached = m.get("cached_input_tokens")
+            uncached = m.get("uncached_input_tokens")
+            if cached is not None and uncached is not None:
+                input_cache["cached_input_tokens"] = (
+                    input_cache["cached_input_tokens"] or 0
+                ) + cached
+                input_cache["uncached_input_tokens"] = (
+                    input_cache["uncached_input_tokens"] or 0
+                ) + uncached
+                input_cache["reported_prompt_tokens"] += cached + uncached
+            else:
+                input_cache["unreported_prompt_tokens"] += m.get("prompt_tokens", 0)
 
     add_metrics(perf_stats["stages"].get("analyst"))
     add_metrics(perf_stats["stages"].get("rag"))
@@ -39,6 +59,11 @@ def aggregate_stage_metrics(perf_stats):
             add_metrics(s_fix)
         for r_fix in b_m.get("runtime_fixes", []):
             add_metrics(r_fix)
+
+    if input_cache["reported_prompt_tokens"]:
+        input_cache["hit_rate"] = (
+            input_cache["cached_input_tokens"] / input_cache["reported_prompt_tokens"]
+        )
 
 
 def format_stats_header(perf_stats, judge_result=None):
@@ -54,12 +79,25 @@ def format_stats_header(perf_stats, judge_result=None):
         f"# Total LLM Time: {perf_stats['total_llm_time']:.2f}s\n"
         f"# Total Tokens: {perf_stats['total_tokens']['total']:,} "
         f"(Prompt: {perf_stats['total_tokens']['prompt']:,}, Completion: {perf_stats['total_tokens']['completion']:,})\n"
-        "#\n"
-        "# Operators & Stages Status:\n"
     )
+    input_cache = perf_stats.get("input_cache", {})
+    cached = input_cache.get("cached_input_tokens")
+    if cached is None:
+        stats_header += "# Input Cache: Unknown (provider did not report cache usage)\n"
+    else:
+        hit_rate = input_cache.get("hit_rate")
+        rate_text = f"{hit_rate:.1%}" if hit_rate is not None else "N/A"
+        stats_header += (
+            f"# Input Cache: {cached:,} cached / "
+            f"{input_cache['reported_prompt_tokens']:,} reported input tokens "
+            f"({rate_text}); unreported input: "
+            f"{input_cache['unreported_prompt_tokens']:,}\n"
+        )
+    stats_header += "#\n# Operators & Stages Status:\n"
     if "analyst" in perf_stats["stages"]:
         a = perf_stats["stages"]["analyst"]
-        stats_header += f"#   - Analyst: SUCCESS | Latency: {a.get('latency', 0.0):.2f}s | Tokens: {a.get('total_tokens', 0):,} (Prompt: {a.get('prompt_tokens', 0):,}, Completion: {a.get('completion_tokens', 0):,})\n"
+        analyst_status = "CACHED (local)" if a.get("local_cache_hit") else "SUCCESS"
+        stats_header += f"#   - Analyst: {analyst_status} | Latency: {a.get('latency', 0.0):.2f}s | Tokens: {a.get('total_tokens', 0):,} (Prompt: {a.get('prompt_tokens', 0):,}, Completion: {a.get('completion_tokens', 0):,})\n"
     if "rag" in perf_stats["stages"]:
         r = perf_stats["stages"]["rag"]
         stats_header += f"#   - RAG: SUCCESS | Latency: {r.get('latency', 0.0):.2f}s | Tokens: {r.get('total_tokens', 0):,} (Prompt: {r.get('prompt_tokens', 0):,}, Completion: {r.get('completion_tokens', 0):,})\n"

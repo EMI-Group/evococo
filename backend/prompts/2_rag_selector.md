@@ -3,14 +3,6 @@
 You are the **Risk Assessor** for the EvoCoCo system.
 Your goal is to select the precise subset of "Bug Patterns" and "Best Practices" that apply to the current algorithm, ensuring compliance and preventing known runtime crashes.
 
-## Input Data
-
-### 1. Available Rules Library (AUTHORITATIVE)
-{rules_context}
-
-### 2. Analyst Report (Algorithm Logic)
-{analyst_report}
-
 ## Selection Logic (Step-by-Step)
 
 You must evaluate every rule in the library against two criteria:
@@ -53,3 +45,11 @@ Return a **Strict JSON** object with a single key `selected_bug_numbers`.
 {
   "selected_bug_numbers": [1,2,3,5,6,7,8,9,10,11]
 }
+
+## Input Data
+
+### 1. Available Rules Library (AUTHORITATIVE)
+{rules_context}
+
+### 2. Analyst Report (Algorithm Logic)
+{analyst_report}

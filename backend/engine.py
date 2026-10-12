@@ -8,6 +8,7 @@ import traceback
 from pydantic import BaseModel, Field
 
 from .config import (
+    ANALYST_REASONING_EFFORT,
     GLOBAL_SPEC_PATH,  # noqa: F401 - kept as module-level re-export
     HISTORY_DIR,  # noqa: F401 - kept as module-level re-export
     MAX_RETAINED_WORKSPACES,  # noqa: F401 - kept as module-level re-export
@@ -22,7 +23,8 @@ from .executor import (
     cleanup_workspace,
     execute_code_trial,
 )
-from .generator import generate_llm_response
+from .generator import ACTIVE_PROVIDER, generate_llm_response
+from .judge_input import compact_judge_candidates
 from .stats import aggregate_stage_metrics, format_stats_header
 from .storage import (
     ensure_history_dir,
@@ -74,6 +76,8 @@ async def run_single_branch_lifecycle(
     few_shot_content: str,
     run_dir: str,
     status_callback,
+    coder_start: asyncio.Event | None = None,
+    coder_finished: asyncio.Event | None = None,
 ):
     """
     Independently run a code generation branch: Coder -> Static Fix -> Runtime Fix
@@ -91,13 +95,8 @@ async def run_single_branch_lifecycle(
     temp_offset = 0.08 * branch_idx
     current_temp = 0.6 + temp_offset
 
-    # [LOG] Branch start
-    await status_callback(
-        "log", L_TAG, f"Start | Strat: {current_strategy_short} | T={current_temp:.2f}"
-    )
-
-    enhanced_constraints = (
-        f"{constraints_str}\n\n"
+    branch_instructions = (
+        "\n\n"
         f"!!! CRITICAL REQUIREMENT FOR THIS BRANCH !!!\n"
         f"{current_strategy_full}\n"
         f"!!! DO NOT USE PYTHON LOOPS FOR CALCULATION !!!"
@@ -112,15 +111,28 @@ async def run_single_branch_lifecycle(
         # =================================================
         coder_metrics = {}
         branch_metrics["coder"] = coder_metrics
-        current_code = await generate_llm_response(
-            "4_coder.md",
-            constraints=enhanced_constraints,
-            blueprint_plan=blueprint_md,
-            asset_library=asset_lib_content,
-            few_shot_examples=few_shot_content,
-            temperature=current_temp,
-            metrics_out=coder_metrics,
-        )
+        try:
+            if coder_start is not None:
+                await coder_start.wait()
+            await status_callback(
+                "log",
+                L_TAG,
+                f"Start | Strat: {current_strategy_short} | T={current_temp:.2f}",
+            )
+            current_code = await generate_llm_response(
+                "4_coder.md",
+                constraints=constraints_str,
+                prompt_suffix=branch_instructions,
+                blueprint_plan=blueprint_md,
+                asset_library=asset_lib_content,
+                few_shot_examples=few_shot_content,
+                temperature=current_temp,
+                metrics_out=coder_metrics,
+            )
+        finally:
+            # A failed warm-up call must not strand the remaining branches.
+            if coder_finished is not None:
+                coder_finished.set()
         current_code = _strip_code_fences(current_code)
 
         if run_dir:
@@ -355,7 +367,10 @@ async def run_pipeline(matlab_code: str, status_callback):
     try:
         # Step 1: Analyst
         await status_callback(
-            "step_start", "Step 1: Analyst", "Analyzing Logic...", step_id="analyst"
+            "step_start",
+            "Step 1: Analyst",
+            f"Analyzing Logic (reasoning: {ANALYST_REASONING_EFFORT or 'provider default'})...",
+            step_id="analyst",
         )
 
         analyst_metrics = {}
@@ -366,20 +381,33 @@ async def run_pipeline(matlab_code: str, status_callback):
             matlab_code=matlab_code,
             global_spec=global_spec_content,
             reference_context=reference_content,  # <--- Here is the injection point
+            reasoning_effort=ANALYST_REASONING_EFFORT,
             metrics_out=analyst_metrics,
         )
 
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
+        if analyst_metrics.get("local_cache_hit"):
+            await status_callback(
+                "log", "CACHE", "Analyst report reused from local cache; no model call."
+            )
         await status_callback("result_ir", "", ir_md)
         await status_callback(
             "step_done",
             "Analyst Done",
-            "Report Generated",
+            "Report Reused"
+            if analyst_metrics.get("local_cache_hit")
+            else "Report Generated",
             step_id="analyst",
             is_success=True,
         )
-        await status_callback("log", "INFO", "Analyst report generated.")
+        await status_callback(
+            "log",
+            "INFO",
+            "Analyst report reused."
+            if analyst_metrics.get("local_cache_hit")
+            else "Analyst report generated.",
+        )
 
         # Step 2: RAG
         await status_callback(
@@ -466,6 +494,8 @@ async def run_pipeline(matlab_code: str, status_callback):
             rag_rules=matched_rules_text,
             analyst_report=ir_md,
             selection_semantics=selection_semantics,
+            matlab_code=matlab_code,
+            asset_library=asset_lib_content,
             metrics_out=architect_metrics,
         )
         if run_dir:
@@ -487,8 +517,17 @@ async def run_pipeline(matlab_code: str, status_callback):
             f"Racing {NUM_BRANCHES} candidates...",
             step_id="tournament",
         )
+        warm_cache = ACTIVE_PROVIDER.startswith("deepseek") and NUM_BRANCHES > 1
+        coder_ready = asyncio.Event() if warm_cache else None
         await status_callback(
-            "log", "RACE", f"Starting {NUM_BRANCHES} parallel branches..."
+            "log",
+            "RACE",
+            (
+                f"Starting {NUM_BRANCHES} branches: first Coder call warms the input cache; "
+                "remaining Coder calls then run in parallel."
+                if warm_cache
+                else f"Starting {NUM_BRANCHES} parallel branches..."
+            ),
         )
 
         tasks = []
@@ -505,18 +544,21 @@ async def run_pipeline(matlab_code: str, status_callback):
                         few_shot_content,
                         run_dir,
                         status_callback,
+                        coder_start=coder_ready if i > 0 else None,
+                        coder_finished=coder_ready if i == 0 else None,
                     )
                 )
             )
 
+        branches_task = asyncio.gather(*tasks)
         try:
-            results = await asyncio.shield(asyncio.gather(*tasks))
+            results = await asyncio.shield(branches_task)
         except asyncio.CancelledError:
             # Cancel once, then wait for every branch to reap its child process.
             # Shielding above prevents gather from cancelling them a second time.
             for task in tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(branches_task, *tasks, return_exceptions=True)
             raise
 
         perf_stats["stages"]["branches"] = []
@@ -562,7 +604,12 @@ async def run_pipeline(matlab_code: str, status_callback):
         if run_dir:
             save_artifact(run_dir, "7_candidates_raw.json", candidates_data)
 
-        candidates_json = json.dumps(candidates_data, indent=2)
+        judge_input = compact_judge_candidates(candidates_data)
+        if run_dir:
+            save_artifact(run_dir, "7_judge_input.json", judge_input)
+        candidates_json = json.dumps(
+            judge_input, ensure_ascii=False, separators=(",", ":")
+        )
 
         final_code = ""
 
@@ -677,6 +724,20 @@ async def run_pipeline(matlab_code: str, status_callback):
                 "STATS",
                 f"Total LLM Time: {total_time:.2f}s | Total Tokens: {total_t:,} (Prompt: {total_p:,}, Completion: {total_c:,})",
             )
+            input_cache = perf_stats["input_cache"]
+            if input_cache["hit_rate"] is not None:
+                await status_callback(
+                    "log",
+                    "CACHE",
+                    f"Input cache: {input_cache['cached_input_tokens']:,} / "
+                    f"{input_cache['reported_prompt_tokens']:,} reported tokens "
+                    f"({input_cache['hit_rate']:.1%}) | "
+                    f"Unreported input: {input_cache['unreported_prompt_tokens']:,}",
+                )
+            else:
+                await status_callback(
+                    "log", "CACHE", "Input cache usage was not reported."
+                )
         # Intentional: stats logging is best-effort and must not break the pipeline
         except Exception as stats_err:  # noqa: BLE001
             print(f">>> [WARNING] Failed to log/save performance stats: {stats_err}")

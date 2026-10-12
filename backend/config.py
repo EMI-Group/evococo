@@ -41,6 +41,12 @@ if NUM_BRANCHES < 1:
 ACTIVE_LLM_PROVIDER = os.getenv("ACTIVE_LLM_PROVIDER", "gemini")
 _default_reasoning_effort = "minimal" if ACTIVE_LLM_PROVIDER == "gemini" else "low"
 REASONING_EFFORT = os.getenv("REASONING_EFFORT", _default_reasoning_effort).strip()
+_default_analyst_effort = (
+    "high" if ACTIVE_LLM_PROVIDER.startswith("deepseek") else REASONING_EFFORT
+)
+ANALYST_REASONING_EFFORT = os.getenv(
+    "ANALYST_REASONING_EFFORT", _default_analyst_effort
+).strip()
 LLM_PROVIDERS = {
     "zhipu": {
         "base_url": os.getenv(
@@ -54,9 +60,9 @@ LLM_PROVIDERS = {
         "model": os.getenv("DEEPSEEK_MODEL_PRO", "deepseek-v4-pro"),
         "api_key_env": "DEEPSEEK_API_KEY",
     },
-    "deepseek-v4-flash": {
+    "deepseek-flash": {
         "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        "model": os.getenv("DEEPSEEK_MODEL_FLASH", "deepseek-v4-flash"),
+        "model": os.getenv("DEEPSEEK_MODEL_FLASH", "deepseek-flash"),
         "api_key_env": "DEEPSEEK_API_KEY",
     },
     "gemini": {

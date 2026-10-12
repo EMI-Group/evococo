@@ -30,6 +30,7 @@ backend_generator = importlib.import_module("backend.generator")
 
 NUM_BRANCHES = backend_config.NUM_BRANCHES
 REASONING_EFFORT = backend_config.REASONING_EFFORT
+ANALYST_REASONING_EFFORT = backend_config.ANALYST_REASONING_EFFORT
 run_pipeline = backend_engine.run_pipeline
 ACTIVE_PROVIDER = backend_generator.ACTIVE_PROVIDER
 MODEL_NAME = backend_generator.MODEL_NAME
@@ -219,6 +220,7 @@ async def main() -> None:
         "active_provider": ACTIVE_PROVIDER,
         "model": MODEL_NAME,
         "reasoning_effort_requested": REASONING_EFFORT,
+        "analyst_reasoning_effort_requested": ANALYST_REASONING_EFFORT,
         "algorithms": [os.path.splitext(name)[0] for name in m_files],
         "algorithm_count": len(m_files),
         "repeats_per_algorithm": args.repeats,
@@ -232,7 +234,8 @@ async def main() -> None:
     print(
         f"Found {len(m_files)} algorithm(s) to process. "
         f"Repeats={args.repeats}, repeat concurrency={args.repeat_concurrency}, "
-        f"model={MODEL_NAME}, reasoning_effort={REASONING_EFFORT}. "
+        f"model={MODEL_NAME}, reasoning_effort={REASONING_EFFORT}, "
+        f"analyst_reasoning_effort={ANALYST_REASONING_EFFORT}. "
         f"Outputs will be saved to {output_dir}"
     )
 

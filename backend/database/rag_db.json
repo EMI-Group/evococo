@@ -63,7 +63,7 @@
         "cd"
       ],
       "always_apply": false,
-      "instruction": "Call as `crowding_distance(full_objs, mask)`. Do NOT pass sliced `objs[mask]`. Mask must be boolean [N]."
+      "instruction": "When using EvoX `crowding_distance`, call `cd = crowding_distance(full_objs, mask)` with boolean mask [N], not sliced objectives. The return is full-length [N], with valid +inf boundaries and -inf outside mask. If the source stores per-front distances, update only that front: `distances = torch.where(mask, cd, distances)` (or `distances[mask] = cd[mask]` in eager code). Do not assign full cd to a masked subset or add full masked results across fronts: +inf + -inf produces NaN and destroys earlier fronts. This rule concerns this SDK operator only; preserve other density metrics and source aggregation semantics."
     },
     {
       "id": "Bug #7 (SDR Dominance Helper)",
@@ -107,7 +107,7 @@
         "deadlock"
       ],
       "always_apply": true,
-      "instruction": "1. RANK SEMANTICS: `non_dominate_rank` is zero-based; rank `0` is the first Pareto front. Never use `rank == 1` to select the first front. 2. Deadlock Breaker: if `num_in_front==0`, force select all remaining individuals (do NOT break). 3. EFFICIENCY: Calculate row-dependent metrics (like Crowding Distance) INSIDE the while loop immediately. Do NOT iterate fronts again in a second loop."
+      "instruction": "1. RANK SEMANTICS: SDK non_dominate_rank is zero-based; rank 0 is its first Pareto front. Preserve custom source ranking rather than substituting that operator. 2. For a custom relation with dominate[i,j] meaning i dominates j, incoming edges are dominate.any(dim=0); removing a selected front's outgoing edges must clear ROWS: dominate &= ~current.unsqueeze(1). Clearing columns with unsqueeze(0) is not equivalent. 3. Preserve the source peeling condition and separate the row count from the requested survivor count. A deadlock fallback must not conceal an axis or ranking error. 4. EFFICIENCY: Calculate row-dependent metrics like Crowding Distance inside the peeling loop on the full matrix with the current front mask."
     },
     {
       "id": "Bug #10 (MATLAB Dim Mapping)",
@@ -151,7 +151,7 @@
         "/"
       ],
       "always_apply": true,
-      "instruction": "Always add epsilon (1e-6) to the denominator: `x / (norm + 1e-6)`. Never divide directly."
+      "instruction": "Preserve the source division for every nonzero denominator. Do NOT add epsilon unconditionally or clamp all small positive denominators: this changes cosine angles, normalization and order-statistic thresholds. Keep any stabilization already present in the source. For a zero denominator, use an explicit zero mask and document the fallback in the blueprint; replace only zero entries in the denominator before division, then apply the documented fallback only at those entries. Do not invent a universal zero-result policy. Clamp acos inputs to [-1,1] only to contain floating-point roundoff, without offsetting valid cosine values."
     },
     {
       "id": "Bug #13 (Reference Vector Init)",
@@ -195,7 +195,7 @@
         "nsga-ii/sdr"
       ],
       "always_apply": false,
-      "instruction": "1. Accumulate `zmin` historically. 2. Round data before `unique`. 3. Angle(eye)=Pi/2 (Cosine=0). 4. Use `unique` on min_angles before finding median. 5. CRITICAL: `Theta` must be clamped >= 1.0 (`max(1, ...)`)."
+      "instruction": "Preserve the supplied SDR source expressions except for the explicitly requested NSGA-II-SDR lower-median threshold below. For NSGA-II-SDR: 1. Accumulate zmin historically; compute zmax from the previous population's first SDR front before environmental selection. 2. Normalize with zmax-zmin before rounding and deduplication. 3. NormP=sum(PopObj,2), not an L2 norm; use cosine similarity for acos, with diagonal cosine=0 (Angle=Pi/2). 4. Requested NSGA-II-SDR target: row_min=Angle.min(dim=1).values; temp=torch.unique(row_min, sorted=True); k=(temp.numel()+1)//2; minA=temp[k-1]. Keep the unique step. k is based on the number of unique angles, NOT the candidate count or requested survivor count. For an even count, use the lower middle value without averaging. Label this as the requested lower-median variant; separately quote the original MATLAB temp(min(ceil(N/2),end)) without implementing that source index. 5. Theta=max(1,Angle/minA), not a comparison against each row's minimum angle. MATLAB max(1,NaN) returns 1: use torch.fmax(torch.ones_like(Angle), Angle/minA), which also retains positive infinity, rather than clamp_min or torch.maximum that propagate NaN. Do not offset nonzero minA. 6. Peel the custom SDR dominance matrix directly; do not pass it to an SDK Pareto-ranking function. Preserve other SDR variants' actual formulas; the requested lower-median override applies only to NSGA-II-SDR (NSGAIISDR)."
     },
     {
       "id": "Bug #18 (Normalization Trigger)",
@@ -405,7 +405,7 @@
         "SSCEA"
       ],
       "always_apply": false,
-      "instruction": "Do not blindly replace legitimate matrix weight denominators with `1e-6` for safe division, as it causes ASF metrics to explode to infinity. Apply safe division `+1e-6` only to the scaling factor `Znadir - Zideal`."
+      "instruction": "Do not blindly replace legitimate matrix weight denominators with `1e-6` for safe division, as it causes ASF metrics to explode to infinity. Preserve source stabilization when present. For `Znadir - Zideal`, preserve all nonzero entries and use a documented, masked fallback only for zero entries; do not add `1e-6` to every scaling factor."
     },
     {
       "id": "Bug #34 (Monte Carlo HV Sampling)",

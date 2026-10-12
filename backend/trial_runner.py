@@ -5,32 +5,62 @@ from pathlib import Path
 from types import ModuleType
 
 
+def _state_nan_counts(algorithm):
+    """Inspect registered state, without guessing algorithm-specific field names."""
+    import torch
+
+    return {
+        name: int(torch.isnan(value).sum())
+        for name, value in algorithm.named_buffers()
+        if value.is_floating_point() or value.is_complex()
+    }
+
+
 def run_trial(filename: str) -> None:
     import torch
     from evox import metrics
     from evox.workflows import StdWorkflow
 
     workflows = []
+    initial_nan_counts = {}
     original_init = StdWorkflow.__init__
+    original_init_step = StdWorkflow.init_step
     original_igd = metrics.igd
 
     def track_workflow(workflow, *args, **kwargs):
         original_init(workflow, *args, **kwargs)
         workflows.append(workflow)
+        initial_nan_counts[id(workflow)] = _state_nan_counts(workflow.algorithm)
+
+    def validate_workflow(workflow):
+        fit = getattr(workflow.algorithm, "fit", None)
+        if not isinstance(fit, torch.Tensor) or fit.ndim != 2 or fit.numel() == 0:
+            raise ValueError(
+                "Runtime validation failed: missing or empty algorithm.fit"
+            )
+        if not torch.isfinite(fit).all():
+            raise ValueError(
+                "Runtime validation failed: algorithm.fit contains NaN or infinite values"
+            )
+        baseline = initial_nan_counts[id(workflow)]
+        for name, count in _state_nan_counts(workflow.algorithm).items():
+            if count > baseline.get(name, 0):
+                raise ValueError(
+                    f"Runtime validation failed: algorithm state '{name}' contains "
+                    f"new NaN values ({count}; constructor baseline {baseline.get(name, 0)}). "
+                    "Check the producing operation and masked updates; preserve legitimate sentinels."
+                )
 
     def validate_workflows():
         if not workflows:
             raise ValueError("Runtime validation failed: no StdWorkflow was executed")
         for workflow in workflows:
-            fit = getattr(workflow.algorithm, "fit", None)
-            if not isinstance(fit, torch.Tensor) or fit.ndim != 2 or fit.numel() == 0:
-                raise ValueError(
-                    "Runtime validation failed: missing or empty algorithm.fit"
-                )
-            if not torch.isfinite(fit).all():
-                raise ValueError(
-                    "Runtime validation failed: algorithm.fit contains NaN or infinite values"
-                )
+            validate_workflow(workflow)
+
+    def validated_init_step(workflow, *args, **kwargs):
+        result = original_init_step(workflow, *args, **kwargs)
+        validate_workflow(workflow)
+        return result
 
     def validated_igd(*args, **kwargs):
         # Inspect the original state even when the demo filtered its local `fit`.
@@ -46,6 +76,7 @@ def run_trial(filename: str) -> None:
     main_module.__file__ = str(script)
     main_module.__cached__ = None
     StdWorkflow.__init__ = track_workflow
+    StdWorkflow.init_step = validated_init_step
     metrics.igd = validated_igd
     sys.argv = [filename]
     sys.path[0:1] = [str(script.parent)]
@@ -56,6 +87,7 @@ def run_trial(filename: str) -> None:
     finally:
         # Keep the original traceback on failure and restore state for callers.
         StdWorkflow.__init__ = original_init
+        StdWorkflow.init_step = original_init_step
         metrics.igd = original_igd
         sys.argv = original_argv
         sys.path[:] = original_path

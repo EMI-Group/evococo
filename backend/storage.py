@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 from .config import (
+    BASE_WORKSPACE_DIR,
     GLOBAL_SPEC_PATH,
     HISTORY_DIR,
     MAX_RETAINED_WORKSPACES,
@@ -24,6 +25,49 @@ from .config import (
 from .executor import cleanup_old_workspaces
 
 logger = logging.getLogger(__name__)
+ANALYST_CACHE_DIR = Path(BASE_WORKSPACE_DIR) / "analyst_cache"
+
+
+def load_analyst_cache(cache_key: str) -> str | None:
+    """Read a reusable report; missing or corrupt entries are cache misses."""
+    path = ANALYST_CACHE_DIR / f"{cache_key}.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("version") == 1:
+            report = data.get("report")
+            if isinstance(report, str) and report.strip():
+                return report
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        logger.warning(
+            "Could not read analyst cache (%s); regenerating.", type(exc).__name__
+        )
+    return None
+
+
+def save_analyst_cache(cache_key: str, report: str) -> None:
+    """Atomically publish a completed report; cache failures never fail a run."""
+    if not isinstance(report, str) or not report.strip():
+        return
+    path = ANALYST_CACHE_DIR / f"{cache_key}.json"
+    temporary_path = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+    try:
+        ANALYST_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        temporary_path.write_text(
+            json.dumps({"version": 1, "report": report}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        temporary_path.replace(path)
+    except OSError as exc:
+        logger.warning(
+            "Could not write analyst cache (%s); continuing.", type(exc).__name__
+        )
+    finally:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def load_rag_db():

@@ -1,18 +1,10 @@
+# Shared Algorithm Blueprint
+
+{blueprint_plan}
+
 # Agent Role: Static Fixer (Step 5)
 
 The Python code generated in Step 4 has static analysis errors (detected by Ruff).
-
-## Error Report
-{error_log}
-
-## The Code
-{previous_code}
-
-## Selection Semantics to Preserve
-{selection_semantics}
-
-The current blueprint (including the per-site Selection Semantics Contract):
-{blueprint_plan}
 
 ## Task
 1.  **Fix ONLY the Reported Errors**:
@@ -25,3 +17,15 @@ The current blueprint (including the per-site Selection Semantics Contract):
 
 ## Output
 Output ONLY the fully corrected Python code string.
+
+## Selection Semantics to Preserve
+{selection_semantics}
+
+The current blueprint (including the per-site Selection Semantics Contract):
+See the Shared Algorithm Blueprint above.
+
+## The Code
+{previous_code}
+
+## Error Report
+{error_log}

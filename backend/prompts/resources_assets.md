@@ -22,6 +22,10 @@ from evox.utils import (
 # [WARNING]:
 # 1. Input 'x' MUST be 2D (N, D). If input is 1D, use .unsqueeze(1).
 # 2. Returns a tuple (unique_rows, indices) by default.
+# Signature: unique_rows_sorted(x, return_index=True).
+# 'return_index' is a bool, not a second tensor to deduplicate.
+# 'indices' has shape (K,) and indexes original rows; it is NOT an inverse map of shape (N,).
+# With return_index=False, the result is only the unique-row tensor.
 # Usage Pattern:
 #   u_pop, u_idx = unique_rows_sorted(pop)
 #   u_fit = fit[u_idx]
@@ -51,6 +55,15 @@ from evomo.operators.selection import (
 #   # Crowding distance calculation for a given front (mask is boolean)
 #   # costs: (N, M), mask: (N,) bool
 #   cd = crowding_distance(costs, mask)      # (N,), larger = more diverse
+#   # The result covers ALL N rows: +inf is a valid front boundary;
+#   # rows outside mask are -inf, NOT zero contributions.
+#   # If the source stores each front's distances in a shared vector:
+#   distances = torch.where(mask, cd, distances)
+#   # Equivalent eager indexing: distances[mask] = cd[mask].
+#   # Do not assign the full cd to distances[mask], or sum full masked
+#   # results across fronts: +inf + -inf produces NaN and corrupts prior fronts.
+#   # This update applies only to this SDK operator and per-front storage.
+#   # Other density metrics, aggregation rules and source selection remain unchanged.
 #
 #   # Returns five values; selected_cv is None for unconstrained problems.
 #   selected_pop, selected_fit, rank, cd, selected_cv = nd_environmental_selection(
@@ -58,6 +71,8 @@ from evomo.operators.selection import (
 #   )
 #   # non_dominate_rank is zero-based: rank 0 is the first Pareto front.
 #   rank = non_dominate_rank(fit)
+#   # Input fit is an (N, M) objective-value tensor; this function recomputes Pareto dominance.
+#   # NEVER pass an (N, N) custom dominance matrix. Peel that relation using the source logic.
 
 # --- 4. Variation Operators (Standard) ---
 from evox.operators.crossover import (
@@ -73,6 +88,15 @@ from evox.operators.crossover import (
 from evox.operators.mutation import (
     polynomial_mutation,   # PM
 )
+# Signature: polynomial_mutation(x, lb, ub, pro_m=1.0, dis_m=20.0).
+# Bounds lb and ub are required. x has shape (N, D).
+# pro_m is the expected number of mutated variables, NOT the per-variable probability.
+# The operator samples each variable with probability pro_m / D internally.
+# For the default PlatEMO OperatorGA rate 1/D, pass pro_m=1.0 (or omit it).
+# Do NOT pass pro_m=1.0/D: that would produce a per-variable rate of 1/D**2.
+# For a source per-variable probability p, map it to pro_m=p*D.
+# Usage:
+#   off = polynomial_mutation(off, lb, ub, pro_m=1.0, dis_m=20.0)
 from evox.operators.sampling import (
     uniform_sampling, # (points, n_samples) = uniform_sampling(n, m)
     latin_hypercube_sampling, 
