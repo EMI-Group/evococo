@@ -1,5 +1,5 @@
 {
-  "version": "1.7",
+  "version": "1.8",
   "rules": [
     {
       "id": "Bug #1 (Integer Sentinel)",
@@ -369,8 +369,8 @@
       "instruction": "Batch independent individual, dimension and pairwise calculations using tensor indexing, torch.where, broadcasting and matrix operations. Preserve source-dependent sequential updates, stopping conditions and update order; do not replace them with a different sort or fixed iteration budget. Source-required Python control flow may be isolated in a torch.compiler.disable helper while its independent calculations remain tensorized."
     },
     {
-      "id": "Bug #30 (Brutal Static Truncation)",
-      "description": "Sequential truncation loops with dynamic distance updates cause JIT compiler timeouts and massive CPU-GPU sync bottlenecks.",
+      "id": "Bug #30 (Sequential Truncation with Minimal Synchronization)",
+      "description": "Apply to source-dependent sequential deletion or peeling whose comparison changes after each removal; preserve that dependency while minimizing host synchronization.",
       "action": "must",
       "keywords": [
         "while sum(Del) < K",
@@ -380,7 +380,7 @@
         "MOBCA"
       ],
       "always_apply": false,
-      "instruction": "You MUST approximate sequential peeling mechanisms using 'Brutal Static Truncation': Calculate the density/distance matrix ONCE, sort it (`argsort` or `lexsort`), and use tensor slicing to delete the worst K individuals simultaneously. NEVER translate them into dynamic `while/for` loops with internal matrix updates."
+      "instruction": "Preserve sequential removals and recompute the source comparison on the remaining active rows. Do not replace them with a single static top-K unless source equivalence is established. If each iteration removes exactly one individual and the source target is K removals, obtain K once at the helper boundary and execute exactly K iterations; this removes repeated Del.sum().item() checks without imposing an arbitrary iteration limit. Keep chosen indices as tensors and update masks using scatter/indexing. Isolate only the necessary control helper; keep independent tensor calculations compilable."
     },
     {
       "id": "Bug #31 (Tournament Multifit API)",
@@ -505,7 +505,7 @@
         "dynamic"
       ],
       "always_apply": true,
-      "instruction": "The code uses torch.compile. Keep data-dependent Python control flow and .item()/.tolist()/.cpu().numpy() outside compiled kernels. Preserve source-required sequential structure in a torch.compiler.disable helper when Python control flow is necessary; tensorize its independent calculations and retain source stopping conditions and update order. Do not add fallback termination or unroll every possible front into a large compiled graph. For compiled diagonal/view mutation failures, use out-of-place masking, e.g. distance.masked_fill(torch.eye(N, device=distance.device, dtype=torch.bool), torch.inf), instead of mutating a diagonal view."
+      "instruction": "Minimize host scalar extraction in algorithm hot paths: retain random samples, thresholds, rates and arithmetic as tensors; use known configuration/shape metadata directly; retain tensor indices with gather/index_select/scatter. float(tensor), int(tensor), bool(tensor) and Python if on a tensor reduction also synchronize, so they are not substitutes for .item(). Batch independent random work with the source sampling dependencies intact. torch.where is for pure same-shape value selection, not branches that evaluate offspring or mutate state. Permit minimal host reads only at genuinely required control boundaries and in logging. Isolate the smallest source-required sequential helper; whole-step compiler.disable is a performance downgrade, not the default repair. Preserve stopping conditions, state order and sequential dependencies; do not add fallback termination or unroll every front. For diagonal/view mutation failures, use out-of-place masked_fill with an eye mask instead of mutating a diagonal view."
     },
     {
       "id": "Bug #42 (Evaluation Budget and Phase Mapping)",

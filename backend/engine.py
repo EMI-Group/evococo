@@ -25,6 +25,7 @@ from .executor import (
 )
 from .generator import ACTIVE_PROVIDER, generate_llm_response
 from .judge_input import compact_judge_candidates
+from .performance_review import review_tensor_sync
 from .stats import aggregate_stage_metrics, format_stats_header
 from .storage import (
     ensure_history_dir,
@@ -242,6 +243,23 @@ async def run_single_branch_lifecycle(
         best_history = []
 
         for attempt in range(MAX_RUNTIME_RETRIES + 1):
+            performance_review = review_tensor_sync(current_code)
+            if run_dir:
+                save_artifact(
+                    run_dir,
+                    f"6_performance_{branch_id}_try{attempt}.json",
+                    performance_review,
+                )
+            item_sites = len(performance_review["item_sites"])
+            disabled = bool(performance_review["whole_step_disabled"])
+            if item_sites or disabled:
+                await status_callback(
+                    "log",
+                    L_TAG,
+                    f"Performance hint: {item_sites} .item() call sites; "
+                    f"whole-step compilation disabled: {disabled}. "
+                    "Static hints only; scalar casts and tensor predicates may also synchronize.",
+                )
             await status_callback(
                 "log", L_TAG, f"Runtime Attempt {attempt + 1} executing..."
             )

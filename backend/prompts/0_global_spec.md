@@ -30,7 +30,7 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 ## 4. Forbidden Anti-Patterns (STRICTLY PROHIBITED)
 
 1. **Batch Independent Calculations**: Vectorize independent individual, dimension and pairwise calculations rather than processing them with Python loops.
-2. **Compiled Kernels**: Keep data-dependent Python control flow and `.item()`/`.tolist()`/`.cpu().numpy()` outside compiled kernels. Source-required sequential structure may use a helper decorated with `torch.compiler.disable`; tensorize the independent calculations inside it.
+2. **Compiled Kernels**: Keep hot-path values and indices as tensors; minimize host reads using the JIT rule in RAG. Preserve necessary control boundaries in the smallest helper and keep independent calculations compilable. Logs may extract scalars. Disabling the entire step is a performance downgrade.
 3. **NO Dynamic Lists Extraction**: Do NOT use `selected_indices = []` and `extend()`. Operations must stay in Tensor space.
 4. **Preserve Sequential Semantics**: Retain source-required peeling, sequential updates, stopping conditions and update order. Do not add deadlock exits or fallback termination, or replace iterative selection with a different sort or fixed iteration budget.
     * When a source-equivalent global sort is valid, use `evox.utils.lexsort` with keys ordered from lowest to highest priority. For rank ascending followed by crowding descending, use keys `[-CD, Rank]`. Do NOT substitute a weighted score such as `Rank - CD * 1e-4`: it changes lexicographic priority, especially for infinite crowding. Slice `self.pop = pop[sorted_idx[:N]]` only when this preserves the source selection semantics.

@@ -92,6 +92,15 @@ from evomo.utils import parse_evaluate, register_lazy_buffer
 from evomo.workflows import UnifiedWorkflow
 # UnifiedWorkflow supplies algorithm.evaluate, not algorithm.problem or FE/maxFE.
 
+# Keep scalar arithmetic and indices on device (examples, not a new variation policy):
+#   u = torch.rand(pop_size, 1, device=pop.device)  # one scalar per individual
+#   shift = -b / torch.tan(torch.pi * u)           # no float/u.item() round trip
+#   col = cv.index_select(1, con.reshape(1)).squeeze(1)
+#   rf = (col <= tolerance).float().mean()        # keep rate as a scalar tensor
+#   chosen = torch.argmax(score).reshape(1)
+#   row = pop.index_select(0, chosen)              # no Python integer index
+# Preserve source sampling dependencies; batch only independent draws/calculations.
+
 # --- 4. Variation Operators (Standard) ---
 from evox.operators.crossover import (
     simulated_binary,       # SBX (returns N offspring from N parents)

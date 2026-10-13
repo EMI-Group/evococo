@@ -19,7 +19,7 @@ Your goal is to implement the Architect's Blueprint into executable Python code 
     The last SDK key is primary; never use a weighted rank/crowding score instead.
 5.  **Source Control Flow**: Preserve source stopping conditions and update order. Do not add fallback `break`, `continue`, early exits or error paths to conceal bugs. For example, do not force remaining individuals into a front and break when a mask is empty unless the source does that. Ordinary helper returns are allowed. Preserve the fixed demo's validation.
 6.  **Vectorization**: Batch independent individual, dimension and pairwise calculations. Retain source-required sequential structure; do not replace it with a different sort or fixed iteration budget.
-7.  **JIT**: Keep data-dependent Python loops and `.item()`/`.tolist()`/`.cpu().numpy()` outside compiled kernels. When source-required sequential structure needs Python control flow, isolate that helper with `torch.compiler.disable` and tensorize its independent calculations. Do not unroll every possible front into a large compiled graph.
+7.  **JIT**: Apply the RAG's tensor-retention and minimal-synchronization patterns. Preserve source control boundaries in the smallest helper; keep independent calculations compilable. Do not use whole-step `compiler.disable` as the default solution or unroll every possible front.
 8.  **Constraints**: Follow the Blueprint's mode and source policy. When supported,
     use the optional-CV SDK pattern below and synchronize population/fitness/CV indices.
 9.  **Imports**: Import only symbols used by the completed implementation. The skeleton lists the minimal imports; add required SDK imports from the reference, without copying entire toolbox/example import lists.

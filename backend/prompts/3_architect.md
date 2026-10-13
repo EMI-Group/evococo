@@ -90,6 +90,11 @@ Describe tensor formulas and any source-required sequential structure, including
     * Preserve metric update order. When storing SDK crowding per front, update only the current mask; do not sum full masked outputs across fronts.
     * Use `lexsort` for the final cut only when it preserves the source selection semantics and key priorities.
 
+### D. Complete Step Order
+Give ordered pseudocode for the complete `step`: exact source branch predicates,
+state mutations, evaluated batches and retained/discarded helper returns. Identify
+the minimal host-control boundaries. Helper definitions alone do not specify this order.
+
 ## 4. Helper Function Contracts
 Check the **RAG Constraints**. If a rule (e.g., Bug #7 or #17) explicitly requires a helper function to replicate MATLAB logic, define it here. **If no specific helper is required, write "None".**
 

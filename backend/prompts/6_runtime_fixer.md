@@ -27,7 +27,7 @@ The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN ST
 4. **Source Control Flow**:
     - Preserve source stopping conditions and update order. Do not add fallback `break`, `continue`, early exits or error paths to conceal bugs. Ordinary helper returns are allowed.
     - For stuck peeling, check dominance direction and outgoing-row removal; do not force remaining individuals into a front unless the source does that.
-    - A timeout alone does not prove a deadlock. Keep data-dependent Python control flow and tensor-to-Python conversions outside compiled kernels. If needed, isolate source-required sequential structure with `torch.compiler.disable`; retain its stopping condition and tensorized independent calculations rather than unrolling every possible front.
+    - A timeout alone does not prove a deadlock. Apply the RAG's tensor-retention patterns and minimize host reads at source-required boundaries. Isolate the smallest sequential helper; whole-step `compiler.disable` is a performance downgrade. Preserve stopping conditions rather than unrolling every front or replacing sequential selection.
 
 5. **Scope of Fix**:
    - Modify internal logic of `__init__`, `init_step`, or `step` to fix runtime issues (shape, device, dtype, NaNs).
