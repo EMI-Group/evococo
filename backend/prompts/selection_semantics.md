@@ -8,7 +8,7 @@ The Analyst report and Architect blueprint MUST contain a section named
 `Selection Semantics Contract`. For each site, give:
 
 1. The exact source call/expression and a stable site name (e.g. `parent_mating`).
-2. A table with `priority (1 = highest)`, `raw criterion`, `minimize/maximize`,
+2. A compact criteria listing with `priority (1 = highest)`, `raw criterion`, `minimize/maximize`,
    `source expression/sign`, and `target tensor`. A negative source expression
    must not accidentally be negated twice.
 3. `semantic_order`: the comparison criteria from HIGHEST to LOWEST priority.
@@ -45,13 +45,20 @@ For the source `TournamentSelection(2, N, FrontNo, -CrowdDis)`:
 - Never replace this lexicographic comparison with `rank - epsilon * crowding`.
   No fixed epsilon preserves the priority for unbounded/infinite crowding.
 
-For each declared site, write at least two concrete winner examples: one where
+For each distinct comparison ordering, write at least two concrete winner examples: one where
 criteria disagree and one where the primary criterion ties. For rank/crowding,
 also cover infinite crowding:
 
 - A=(rank 0, crowding 0), B=(rank 1, crowding 100): A wins.
 - A=(rank 0, crowding 1), B=(rank 0, crowding 2): B wins.
 - A=(rank 0, crowding 0), B=(rank 1, crowding +inf): A wins.
+
+Sites with identical criteria, directions and tie behavior may reference one
+shared set of examples instead of repeating it. Each site must still declare its
+own source expression, priorities, tie behavior and exact target API arguments.
+Do not share examples across sites whose comparison or tie behavior differs.
+Use a compact per-site row for the criteria instead of repeating the template
+table and general SDK rules; preserve all specified fields.
 
 These examples describe the semantic requirement, not proof that generated code
 has been tested. An optimization/repair must not reverse the order to fix a type

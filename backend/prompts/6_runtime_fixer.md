@@ -7,7 +7,8 @@
 The code passed static analysis but failed during runtime execution.
 
 ## Task & Requirement
-You must fix the runtime bug inside `class <YourAlgoName>`.
+Fix the minimal runtime root cause in the algorithm implementation, including
+its SDK imports and helper computations when they cause the failure.
 
 **CRITICAL IMMUTABILITY RULE (READ CAREFULLY):**
 The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN STANDARD**.
@@ -19,7 +20,10 @@ The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN ST
 **OTHER CRITICAL RULES:**
 1. **NO Refactoring**: Do NOT change the class structure or method signatures.
 2. **Workflow Integrity**: You MUST keep both `init_step(self)` and `step(self)` methods. Do NOT change them into `ask()` and `tell()`.
-3. **Inheritance**: Must inherit from `evox.core.Algorithm`.
+3. **Inheritance**: Must inherit from `evox.core.Algorithm`. The supported import
+   is `from evox.core import Algorithm, Mutable`, not from the `evox` package root.
+   Correct an invalid import outside the class when required; do not retain the
+   same failing import or invent a version fallback to avoid fixing it.
 4. **Source Control Flow**:
     - Preserve source stopping conditions and update order. Do not add fallback `break`, `continue`, early exits or error paths to conceal bugs. Ordinary helper returns are allowed.
     - For stuck peeling, check dominance direction and outgoing-row removal; do not force remaining individuals into a front unless the source does that.
@@ -43,13 +47,11 @@ The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN ST
      do not claim they were executed. Do not swap priorities to improve IGD.
 
 ### Output Format
-You must provide an **Analysis Block** followed by the **FULL Corrected Code**.
+Provide a brief **Analysis Block** followed by the **FULL Corrected Code**.
 
-**1. Analysis Block** Wrap your reasoning in `<analysis>` tags.
-* Identify the exact line number causing the error.
-* Explain WHY it failed (e.g., "Tensor shape mismatch", "Device mismatch", "Deadlock condition").
-* State your fix plan and explain how it retains the source stopping condition.
-* Confirm that source stopping conditions and update order are preserved and no fallback termination was added.
+**1. Analysis Block** In `<analysis>` tags, identify the failing expression,
+its root cause and the minimal correction. Briefly explain any effect on source
+semantics or stopping conditions. Do not repeat a checklist of confirmations.
 
 **2. Code Block**
 * Output the **FULL** corrected code.

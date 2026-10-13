@@ -206,6 +206,14 @@ middle value without averaging. The blueprint labels this intentional variant
 separately from MATLAB's population-based index, and runtime repair retains it.
 Other source expressions and custom dominance peeling remain unchanged by this
 override. This variant is an algorithm change, not a claim of literal source fidelity.
+Selection sites with identical comparison and tie behavior may share winner
+examples while retaining their own source evidence and SDK arguments. Analysis
+and blueprint templates retain their detailed workflow and compliance sections.
+Few-shot references retain compact dominance-based and reference-vector examples
+without optional operator injection. Runtime repair keeps a brief root-cause
+explanation before the complete corrected file, without repeated confirmations.
+Minimal repair includes invalid SDK imports or helper computations outside the
+class; the fixed verification block and algorithm semantics remain unchanged.
 The judge uses branch metrics, implementations, the blueprint, and declared
 selection semantics under its existing tournament criteria. Prompt guidance is
 not an automatic proof of source fidelity.
