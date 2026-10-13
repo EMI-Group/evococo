@@ -62,8 +62,54 @@ class RagResult(BaseModel):
 
 
 def _strip_code_fences(code: str) -> str:
-    """Strip markdown code fences (```python / ```) from generated code."""
-    return code.replace("```python", "").replace("```", "").strip()
+    """Remove code-response wrappers without changing Python statements."""
+    code = code.replace("```python", "").replace("```", "").strip()
+    return re.sub(
+        r"\A(?:Code|Corrected Code|Full Corrected Code):\s*\n",
+        "",
+        code,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
+def _is_environment_error(stderr: str) -> bool:
+    """Recognize host compiler failures that algorithm repairs cannot resolve."""
+    normalized = stderr.replace("\\", "/")
+    if "torch/_inductor" not in normalized and "torch._inductor" not in normalized:
+        return False
+    return "Compiler: cl is not found" in stderr or (
+        "cpp_builder.py" in stderr and "UnicodeDecodeError" in stderr
+    )
+
+
+def _constraint_support_from_report(report: str) -> bool:
+    """Read the Analyst's explicit source decision, without keyword guessing."""
+    matches = re.findall(
+        r"^\s*CONSTRAINT_SUPPORT:\s*(supported|unconstrained|unresolved)\s*$",
+        report.replace("**", "").replace("`", ""),
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    modes = {match.lower() for match in matches}
+    if len(modes) != 1 or "unresolved" in modes:
+        raise ValueError(
+            "Analyst must declare a consistent resolved CONSTRAINT_SUPPORT: supported or "
+            "unconstrained, with source evidence; unresolved constraints cannot be silently removed."
+        )
+    return modes == {"supported"}
+
+
+def _candidate_fallback_key(candidate: dict) -> tuple:
+    """Use each benchmark's own metrics if the Judge is unavailable."""
+    history = candidate.get("constraint_history", [])
+    if history:
+        last = history[-1]
+        return (
+            1 - last["feasible_count"] / last["population"],
+            last["mean_cv"],
+            last["feasible_igd"] if last["feasible_igd"] is not None else float("inf"),
+            candidate["igd"],
+        )
+    return (candidate["igd"],)
 
 
 async def run_single_branch_lifecycle(
@@ -78,6 +124,7 @@ async def run_single_branch_lifecycle(
     status_callback,
     coder_start: asyncio.Event | None = None,
     coder_finished: asyncio.Event | None = None,
+    supports_constraints: bool = False,
 ):
     """
     Independently run a code generation branch: Coder -> Static Fix -> Runtime Fix
@@ -129,6 +176,11 @@ async def run_single_branch_lifecycle(
                 blueprint_plan=blueprint_md,
                 asset_library=asset_lib_content,
                 few_shot_examples=few_shot_content,
+                verification_block=load_resource(
+                    "verification_constrained.md"
+                    if supports_constraints
+                    else "verification_unconstrained.md"
+                ),
                 temperature=current_temp,
                 metrics_out=coder_metrics,
             )
@@ -194,7 +246,12 @@ async def run_single_branch_lifecycle(
                 "log", L_TAG, f"Runtime Attempt {attempt + 1} executing..."
             )
 
-            report = await execute_code_trial(current_code, session_id)
+            if supports_constraints:
+                report = await execute_code_trial(
+                    current_code, session_id, supports_constraints=True
+                )
+            else:
+                report = await execute_code_trial(current_code, session_id)
 
             if run_dir:
                 save_artifact(
@@ -203,11 +260,27 @@ async def run_single_branch_lifecycle(
                 save_artifact(
                     run_dir,
                     f"6_log_{branch_id}_try{attempt}.txt",
-                    f"IGD: {report['last_igd']}\nErr: {report['stderr']}",
+                    f"IGD: {report['last_igd']}\nErr: {report['stderr']}\n"
+                    f"Constraints: {json.dumps(report.get('constraint_history', []))}\n"
+                    f"Output:\n{report.get('stdout', '')}",
                 )
 
+            if not report["success"] and _is_environment_error(
+                report.get("stderr", "")
+            ):
+                await status_callback(
+                    "log",
+                    "ERR",
+                    f"[{L_TAG}] Host compiler environment failed; preserving code and stopping algorithm repair.",
+                )
+                break
+
             if report["success"]:
-                if report["igd_history"] and not report["has_nonfinite"]:
+                if (
+                    report["igd_history"]
+                    and not report["has_nonfinite"]
+                    and (not supports_constraints or report.get("constraint_history"))
+                ):
                     best_igd_in_branch = report["last_igd"]
                     best_history = report["igd_history"]
 
@@ -217,6 +290,14 @@ async def run_single_branch_lifecycle(
                         "PERF",
                         f"[{L_TAG}] Success! IGD: {best_igd_in_branch:.5f}",
                     )
+                    if supports_constraints:
+                        last = report["constraint_history"][-1]
+                        await status_callback(
+                            "log",
+                            "PERF",
+                            f"[{L_TAG}] MW4 feasible: {last['feasible_count']}/{last['population']}; "
+                            f"mean CV: {last['mean_cv']:.5g}; feasible IGD: {last['feasible_igd']}",
+                        )
 
                     cleanup_workspace(session_id)
                     return {
@@ -227,6 +308,7 @@ async def run_single_branch_lifecycle(
                         "exec_time": report.get("exec_time", -1.0),
                         "branch_idx": branch_idx,
                         "metrics": branch_metrics,
+                        "constraint_history": report.get("constraint_history", []),
                     }
                 else:
                     await status_callback(
@@ -390,6 +472,15 @@ async def run_pipeline(matlab_code: str, status_callback):
 
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
+        supports_constraints = _constraint_support_from_report(ir_md)
+        perf_stats["supports_constraints"] = supports_constraints
+        await status_callback(
+            "log",
+            "MODE",
+            "Source-supported constraints: DTLZ2 + MW4 verification."
+            if supports_constraints
+            else "Unconstrained source: DTLZ2 verification only.",
+        )
         if analyst_metrics.get("local_cache_hit"):
             await status_callback(
                 "log", "CACHE", "Analyst report reused from local cache; no model call."
@@ -467,7 +558,12 @@ async def run_pipeline(matlab_code: str, status_callback):
                 seen_ids.add(r["id"])
 
         matched_rules_text = "\n".join(matched_rules_list)
-        branch_constraints = f"{matched_rules_text}\n\n{selection_semantics}"
+        source_mode = "supported" if supports_constraints else "unconstrained"
+        branch_constraints = (
+            f"{matched_rules_text}\n\n{selection_semantics}\n\n"
+            f"Source constraint support (Analyst): {source_mode}. "
+            "Preserve the source policy; do not add or discard a constraint mechanism."
+        )
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_result.model_dump())
 
@@ -549,6 +645,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                         status_callback,
                         coder_start=coder_ready if i > 0 else None,
                         coder_finished=coder_ready if i == 0 else None,
+                        supports_constraints=supports_constraints,
                     )
                 )
             )
@@ -576,6 +673,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                     "success": res["success"],
                     "igd": res["igd"],
                     "metrics": b_metrics,
+                    "constraint_history": res.get("constraint_history", []),
                 }
             )
 
@@ -600,6 +698,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                     "final_igd": res["igd"],
                     "igd_history": res["igd_history"],
                     "exec_time": res.get("exec_time", -1.0),
+                    "constraint_history": res.get("constraint_history", []),
                     "code_snippet": res["code"],
                 }
             )
@@ -699,7 +798,7 @@ async def run_pipeline(matlab_code: str, status_callback):
                 await status_callback("log", "ERR", f"Judge Failed: {e}. Fallback.")
                 best_res = min(
                     [r for r in results if r["success"]],
-                    key=lambda x: x["igd"],
+                    key=_candidate_fallback_key,
                     default=results[0],
                 )
                 final_code = best_res["code"]

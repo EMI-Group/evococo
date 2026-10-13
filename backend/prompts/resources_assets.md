@@ -69,17 +69,35 @@ from evomo.operators.selection import (
 #   selected_pop, selected_fit, rank, cd, selected_cv = nd_environmental_selection(
 #       pop, fit, topk
 #   )
+#   # Returned cd is computed on the cutoff front; earlier-front rows are -inf.
+#   # With CV (EvoMO >= 0.3.1): nd_environmental_selection(pop, fit, topk, cv),
+#   # or non_dominate_rank(fit, cv=cv). Use only if source comparisons/ties agree.
+#   # SDK equal-total-CV rows compare objectives. PlatEMO NDSort(F,C,N) instead
+#   # makes infeasible equal-CV rows tie via max(F,dim=0)+sum(max(C,0),dim=1).
+#   # For that source, rank this local transformed copy without cv=; retain
+#   # raw fit/CV state and use source-specified objectives for crowding.
 #   # non_dominate_rank is zero-based: rank 0 is the first Pareto front.
 #   rank = non_dominate_rank(fit)
 #   # Input fit is an (N, M) objective-value tensor; this function recomputes Pareto dominance.
 #   # NEVER pass an (N, N) custom dominance matrix. Peel that relation using the source logic.
 
+# Optional CV state/evaluation only for source-supported algorithms:
+from evomo.utils import parse_evaluate, register_lazy_buffer
+#   register_lazy_buffer(self, "cv", device_like="pop")  # once, after self.pop exists
+#   self.fit, self.cv = parse_evaluate(self.evaluate(self.pop))
+#   # parse_evaluate only unpacks; it does not clamp or aggregate CV.
+#   # cv is None for fitness-only results; slice supplied cv with pop/fit indices.
+#   # CMOP.evaluate returns nonnegative (N,C) CV: max(G,0), max(abs(H)-eq_eps,0).
+#   # This is not signed G/H; custom problem tuples are forwarded unchanged.
+from evomo.workflows import UnifiedWorkflow
+# UnifiedWorkflow supplies algorithm.evaluate, not algorithm.problem or FE/maxFE.
+
 # --- 4. Variation Operators (Standard) ---
 from evox.operators.crossover import (
     simulated_binary,       # SBX (returns N offspring from N parents)
     simulated_binary_half,  # SBX-half (returns N/2 offspring from N parents)
-    differential_evolution, # DE
 )
+# differential_evolution is a module, not a callable; use source DE equations.
 # Usage:
 #   # Expect x shape: (N, D), paired as x[:N/2] vs x[N/2:N]
 #   off = simulated_binary(x, pro_c=1.0, dis_c=20.0)        # (N, D)

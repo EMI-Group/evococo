@@ -77,6 +77,30 @@ experiments. The same algorithms are also integrated into
 - Includes 48 MOEAs for evaluating migration reliability, optimization fidelity, and
   computational scalability.
 
+Constraint handling follows the supplied source. If its selection, feasibility,
+or penalty mechanism uses constraints, the translation preserves that mechanism;
+otherwise it remains unconstrained. The Analyst declares `CONSTRAINT_SUPPORT`
+and documents source evidence, aggregation, thresholds, and selection priorities.
+Unresolved constraint semantics stop generation instead of silently dropping CV.
+
+Source-supported constrained algorithms require EvoMO >= 0.3.1 and accept both
+plain objective tensors and `(fitness, cv)` evaluations through `UnifiedWorkflow`.
+They are checked on two separate problems: unconstrained DTLZ2 and constrained MW4,
+both with 3 objectives, 12 variables, population 100, and 100 compiled steps.
+Unconstrained algorithms use a DTLZ2-only check with 100 compiled steps. The constrained
+trial checks stored fitness and CV against the selected population's evaluation.
+It records feasible count, mean total CV, and feasible-only IGD in
+`constraint_history`; no feasible solutions produce `null` for feasible IGD.
+These metrics are kept separate from DTLZ2 IGD. This is a small runtime smoke
+check, not validation of every constraint policy or mathematical fidelity.
+The two-problem profile has a 240-second subprocess budget;
+the DTLZ2-only profile has 120 seconds. If the Judge fails, constrained candidates
+are compared by final feasible fraction, mean CV, feasible IGD, then DTLZ2 IGD;
+unconstrained candidates retain the original DTLZ2 IGD fallback.
+Recognized host-compiler failures (missing MSVC or Inductor compiler-output
+decoding errors) retain their logs and stop algorithm repair for that branch;
+configure the compiler environment before rerunning the trial.
+
 ## Installation
 
 Clone the repository and install its Python dependencies:

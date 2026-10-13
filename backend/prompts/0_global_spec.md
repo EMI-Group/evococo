@@ -1,15 +1,16 @@
 # System Architecture Standard (EvoCoCo)
 
-## 0. Target Environment (Unconstrained Only)
-* **Optimization Type**: Unconstrained Evolutionary Optimization.
-* **Constraint Handling**: **STRICTLY FORBIDDEN**.
-    * **Remove Logic**: Any logic related to constraint violation (`CV`), feasibility matrices, or penalty functions in the source MATLAB code **MUST BE REMOVED**.
-    * **Assume Feasible**: The converted Python code must treat the problem as having **no constraints** (i.e., every solution is feasible).
-    * **Objective Sorting**: Sorting and selection must rely **solely on Objective Values** (Fitness).
+## 0. Target Environment (Source-Defined Constraint Support)
+* Preserve constraints only when the source uses them in optimization decisions;
+  names or algorithm labels alone are not evidence. Otherwise remain unconstrained.
+* Retain source CV aggregation, tolerances, priorities and ties; do not replace
+  them with a generic constraint policy. Report missing semantics as unresolved.
+* Supported algorithms accept both fitness-only and `(fitness, cv)` evaluations.
+  Keep evaluated fitness/CV aligned with the population; SDK details are in the reference.
 
 ## 1. Input Interface
-The algorithm is a class inheriting from `evox.Algorithm`.
-It must accept a `problem` object and configuration parameters.
+The algorithm is a class inheriting from `evox.core.Algorithm`.
+Use the Coder's constructor interface; the workflow supplies `self.evaluate(pop)`, not `self.problem`.
 
 ## 2. Tensor Standards (PyTorch)
 All calculations must use `torch.Tensor` on GPU (cuda) if available.

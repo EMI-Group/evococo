@@ -12,7 +12,7 @@ Your goal is to deconstruct legacy MATLAB algorithm code into a framework-agnost
 3.  **Tensor Forensics**: Identify the "Shape Logic". $(N, D)$ vs $(N, M)$.
 4.  **Tensorization Reconnaissance**: Identify loop-heavy sections (e.g., pair-wise calculations) to be broadcasted.
 5.  **Deep Inspection (Crucial)**: Compare the MATLAB code against "standard" textbook implementations to find **deviations**.
-6.  **Constraint Sanitization**: Mark constraint logic (`CV`, `con`) for **REMOVAL** per Global Spec.
+6.  **Constraint Analysis**: Declare the source mode and its evidence in Section 5.
 7.  **Exact Mathematics**: Quote the source expressions for custom metrics, index selection, normalization, and state updates. Preserve their operators and index bounds. A prose label such as "median" must not replace `temp(min(ceil(N/2),end))`; state what `N` counts. Distinguish objective sums from L2 norms and cosine similarity from cosine distance.
 
 ## Output Format
@@ -20,6 +20,9 @@ Your goal is to deconstruct legacy MATLAB algorithm code into a framework-agnost
 Please output a Markdown report following this exact structure:
 
 # Algorithm Analysis Report
+
+Immediately after this heading, emit one plain line: `CONSTRAINT_SUPPORT: supported`,
+`CONSTRAINT_SUPPORT: unconstrained`, or `CONSTRAINT_SUPPORT: unresolved`.
 
 ## 1. Algorithm Identity
 * **Name**: [Algorithm Name]
@@ -44,10 +47,11 @@ List key data structures that persist.
 * **`ObjValues`**: [Shape]
 * **`Parameters`**: [Constants, e.g., `1e-6`, `0.05`]
 
-## 5. Constraint Handling Strategy (Logic Filter)
-**Check the Global Spec. If "Unconstrained Only":**
-* **Source Logic**: [Identify where `CV`/`con` is calculated or used]
-* **Target Action**: **REMOVE**. [Explicitly state: "Sort by Objectives ONLY"]
+## 5. Constraint Handling Strategy
+Quote evidence for the declared mode. If supported, record violation sign,
+aggregation, thresholds/tolerances and the affected selection priorities/ties.
+If absent, state unconstrained; if required semantics are unknown, state unresolved
+and identify the missing helper or evidence. Angular/density penalties alone are not constraints.
 
 ## 6. Logical Workflow (Step-by-Step)
 Break down the execution flow.

@@ -26,3 +26,5 @@ The input code is custom or standalone MATLAB/Octave code (not built on PlatEMO)
 **3. Logic Translation Protocols**
 * **State Persistence**: Only use `self.` for variables that must survive to the next step.
 * **Slicing & Filtering**: If the MATLAB code filters the population by slicing indices, translate this to slicing both `self.pop` and `self.fit` synchronously.
+* **Constraints**: When present, identify source violations and their decision
+  rules; include CV in synchronized state slicing. Otherwise remain unconstrained.

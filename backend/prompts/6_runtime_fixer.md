@@ -36,6 +36,10 @@ The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN ST
    - State validation can report new NaN values at initialization or metric checkpoints. Fix the producing computation rather than resetting state, applying `nan_to_num`, or removing the state field to silence the check. Preserve source-defined sentinels; infinities alone do not imply an error. Crowding-specific update advice applies only when this SDK operator is used, not to other density metrics.
 
 6. **Semantic Preservation**:
+   - Retain the Blueprint's constraint mode and source policy. Repair CV at its
+     producing/slicing site, preserving fitness-only compatibility and row alignment.
+   - Repair timeouts without moving population arrays to Python lists or changing
+     the source sorting/stopping semantics; keep independent comparisons tensorized.
    - Do NOT alter algorithmic intent. Only fix the minimal root cause of the crash.
    - For NSGA-II-SDR, retain the Blueprint's explicitly requested lower median of unique row-minimum angles: `temp = torch.unique(Angle.min(dim=1).values, sorted=True); minA = temp[(temp.numel() + 1) // 2 - 1]`. Do not replace this target with the raw MATLAB population-count index while repairing a runtime error.
    - Do NOT silence errors by skipping computation steps. All originally intended computations must still occur.

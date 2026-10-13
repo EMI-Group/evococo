@@ -116,6 +116,13 @@ def format_stats_header(perf_stats, judge_result=None):
             else:
                 igd_str = str(igd_val)
             stats_header += f"#   - Branch {b_idx} ({strat_name}): {success_str} | Final IGD: {igd_str}\n"
+            constraint_history = b.get("constraint_history", [])
+            if constraint_history:
+                last = constraint_history[-1]
+                stats_header += (
+                    f"#     * {last['problem']}: feasible {last['feasible_count']}/{last['population']} "
+                    f"| Mean CV: {last['mean_cv']:.5g} | Feasible IGD: {last['feasible_igd']}\n"
+                )
 
             b_m = b.get("metrics", {})
             if b_m.get("coder"):

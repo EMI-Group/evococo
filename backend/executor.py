@@ -1,4 +1,5 @@
 import asyncio
+import json
 import math
 import os
 import re
@@ -169,6 +170,7 @@ async def execute_code(
     filename="algo_script.py",
     *,
     validate_fitness: bool = False,
+    supports_constraints: bool = False,
 ):
     """Run generated code in an isolated workspace and return its output."""
     if not session_id:
@@ -187,9 +189,14 @@ async def execute_code(
             if validate_fitness:
                 runner = os.path.join(os.path.dirname(__file__), "trial_runner.py")
                 cmd = [sys.executable, runner, filename]
+                if supports_constraints:
+                    cmd.append("--constraints")
             else:
                 cmd = [sys.executable, filename]
-            result = await _run_subprocess(cmd, cwd=workspace, timeout=60)
+            # Scale the per-problem budget with the 100-step verification profile.
+            result = await _run_subprocess(
+                cmd, cwd=workspace, timeout=240 if supports_constraints else 120
+            )
             stdout_str = result.stdout.decode(errors="replace") if result.stdout else ""
             stderr_str = result.stderr.decode(errors="replace") if result.stderr else ""
             returncode = result.returncode
@@ -231,7 +238,7 @@ def parse_igd_from_stdout(stdout: str) -> list[float]:
 
 def parse_exec_time_from_stdout(stdout: str) -> float:
     """Extract Execution time from standard output"""
-    match = re.search(r"Execution time for Gen 2-50.*?:\s*([0-9]*[.]?[0-9]+)s", stdout)
+    match = re.search(r"Execution time for Gen 2-\d+.*?:\s*([0-9]*[.]?[0-9]+)s", stdout)
     if match:
         try:
             return float(match.group(1))
@@ -241,16 +248,57 @@ def parse_exec_time_from_stdout(stdout: str) -> float:
 
 
 async def execute_code_trial(
-    code_str: str, session_id: str, filename="algo_script.py"
+    code_str: str,
+    session_id: str,
+    filename="algo_script.py",
+    *,
+    supports_constraints: bool = False,
 ) -> dict:
     """Advanced trial run function: execute code and analyze convergence metrics"""
     start_time = time.time()
     success, output, error = await execute_code(
-        code_str, session_id, filename, validate_fitness=True
+        code_str,
+        session_id,
+        filename,
+        validate_fitness=True,
+        supports_constraints=supports_constraints,
     )
     duration = time.time() - start_time
 
     igds = parse_igd_from_stdout(output)
+    constraint_history = []
+    for line in output.splitlines():
+        if line.startswith("CONSTRAINT_METRICS: "):
+            try:
+                record = json.loads(line.removeprefix("CONSTRAINT_METRICS: "))
+                if (
+                    record["problem"] != "MW4"
+                    or type(record["population"]) is not int
+                    or record["population"] <= 0
+                    or type(record["feasible_count"]) is not int
+                    or not 0 <= record["feasible_count"] <= record["population"]
+                    or not math.isfinite(record["mean_cv"])
+                    or record["mean_cv"] < 0
+                    or type(record["generation"]) is not int
+                    or record["generation"] <= 0
+                    or (record["feasible_count"] == 0)
+                    != (record["feasible_igd"] is None)
+                    or (
+                        record["feasible_igd"] is not None
+                        and (
+                            not math.isfinite(record["feasible_igd"])
+                            or record["feasible_igd"] < 0
+                        )
+                    )
+                ):
+                    raise ValueError("Invalid constrained metric values")
+                constraint_history.append(record)
+            except (ValueError, TypeError, KeyError) as exc:
+                success = False
+                error += f"\nRuntime validation failed: malformed constraint metrics ({exc})."
+    if supports_constraints and success and not constraint_history:
+        success = False
+        error += "\nRuntime validation failed: no constrained verification metrics were produced."
     has_nan = any(math.isnan(v) for v in igds)
     has_nonfinite = any(not math.isfinite(v) for v in igds)
 
@@ -275,4 +323,5 @@ async def execute_code_trial(
         "is_converging": is_converging,
         "duration": duration,
         "exec_time": exec_time,
+        "constraint_history": constraint_history,
     }

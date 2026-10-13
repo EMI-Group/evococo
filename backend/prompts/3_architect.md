@@ -7,6 +7,8 @@ Your goal is to transform the abstract logic from the Analyst Report into a conc
 
 ## Core Responsibilities
 1.  **State Architecture**: Decide which variables persist (using `evox.Mutable`) vs which are temporary.
+    * Follow the Analyst's constraint mode; map optional CV and source decisions
+      using the SDK reference only when supported.
 2.  **Tensor Algebra**: Use broadcasting, `bmm`, `einsum` and masking for independent calculations. Preserve source-required sequential structure and its update order; isolate Python control flow outside compiled kernels when needed.
 3.  **Source Code Fidelity (In-Place Tensorization)**:
     * **Goal**: Vectorize the *exact* logic present in the MATLAB code. **Do NOT replace custom logic with standard EvoX operators if they behave differently.**

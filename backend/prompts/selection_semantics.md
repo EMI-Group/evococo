@@ -60,6 +60,9 @@ Do not share examples across sites whose comparison or tie behavior differs.
 Use a compact per-site row for the criteria instead of repeating the template
 table and general SDK rules; preserve all specified fields.
 
+For constraint-aware sites, record source CV aggregation, thresholds, priorities
+and ties. Do not automatically prepend CV to other selection calls.
+
 These examples describe the semantic requirement, not proof that generated code
 has been tested. An optimization/repair must not reverse the order to fix a type
 or shape error. If a helper's comparison semantics cannot be established from

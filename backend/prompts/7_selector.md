@@ -14,6 +14,8 @@ Your job is to select the **SINGLE BEST** implementation based on performance an
 * **Must be `Success: True`**.
 * **Must NOT have NaNs** in the IGD history.
 * Select only an existing branch whose `success` is true.
+* For `constraint_history`, compare feasible fraction, mean CV and feasible-only
+  IGD on the same problem, separately from DTLZ2. Null IGD means no feasible solutions.
 
 **2. Convergence Quality (Baseline Requirement)**
 * Look at `IGD History`.

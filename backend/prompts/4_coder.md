@@ -20,7 +20,9 @@ Your goal is to implement the Architect's Blueprint into executable Python code 
 5.  **Source Control Flow**: Preserve source stopping conditions and update order. Do not add fallback `break`, `continue`, early exits or error paths to conceal bugs. For example, do not force remaining individuals into a front and break when a mask is empty unless the source does that. Ordinary helper returns are allowed. Preserve the fixed demo's validation.
 6.  **Vectorization**: Batch independent individual, dimension and pairwise calculations. Retain source-required sequential structure; do not replace it with a different sort or fixed iteration budget.
 7.  **JIT**: Keep data-dependent Python loops and `.item()`/`.tolist()`/`.cpu().numpy()` outside compiled kernels. When source-required sequential structure needs Python control flow, isolate that helper with `torch.compiler.disable` and tensorize its independent calculations. Do not unroll every possible front into a large compiled graph.
-8.  **Imports**: Import only symbols used by the completed implementation. The skeleton lists the minimal imports; add required SDK imports from the reference, without copying entire toolbox/example import lists.
+8.  **Constraints**: Follow the Blueprint's mode and source policy. When supported,
+    use the optional-CV SDK pattern below and synchronize population/fitness/CV indices.
+9.  **Imports**: Import only symbols used by the completed implementation. The skeleton lists the minimal imports; add required SDK imports from the reference, without copying entire toolbox/example import lists.
 
 ## Output Contract
 Output **ONLY** the raw Python code. Do not wrap in Markdown fences (like ```python) if possible.
@@ -66,47 +68,7 @@ class <YourAlgoName>(Algorithm):
 ```
 [CRITICAL REQUIREMENT] After the class definition and helper functions, you MUST append the following verification block VERBATIM (word-for-word) at the end of the file. The only allowed change is replacing <YourAlgoName> with the actual class name you defined above.
 
-```python
-# === FIXED DEMO BLOCK ===
-# This block MUST be appended at the end of the file.
-if __name__ == "__main__":
-    import time
-    import torch
-    from evox.metrics import igd
-    from evox.problems.numerical import DTLZ2
-    from evox.workflows import StdWorkflow
-
-    torch.set_default_device("cuda")
-
-    # <YourAlgoName> must be replaced by your actual class name
-    algo = <YourAlgoName>(pop_size=100, n_objs=3, lb=-torch.zeros(12), ub=torch.ones(12))
-    prob = DTLZ2(m=3)
-    pf = prob.pf()
-    workflow = StdWorkflow(algo, prob)
-    workflow.init_step()
-    jit_state_step = torch.compile(workflow.step)
-
-    # 1. Trigger JIT compilation (First step)
-    jit_state_step()
-
-    # 2. Pure execution (Remaining 49 steps)
-    torch.cuda.synchronize()
-    exec_start = time.perf_counter()
-
-    for i in range(1, 50):
-        jit_state_step()
-
-        if (i + 1) % 5 == 0:
-            fit = workflow.algorithm.fit
-            # Validate the full population; never hide invalid individuals.
-            if fit.numel() == 0 or not torch.isfinite(fit).all():
-                raise ValueError("Runtime validation failed: empty or non-finite fitness")
-            print(f"Gen {i + 1} IGD: {igd(fit, pf)}")
-
-    torch.cuda.synchronize()
-    exec_time = time.perf_counter() - exec_start
-    print(f"Execution time for Gen 2-50 (49 steps): {exec_time:.4f}s (Avg: {exec_time / 49:.4f}s/gen)")
-```
+{verification_block}
 
 ## Reference Resources (The Toolbox)
 

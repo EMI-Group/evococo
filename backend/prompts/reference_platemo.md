@@ -15,7 +15,7 @@ You must distinguish between **Persistent State** (maintained across generations
 | **Offspring/Temporary** | `OffDec`, `Offspring.decs` | `off_pop` / `vals` | $(N, D)$ | **LOCAL**. Do NOT use `self.` prefix. |
 | **Archive** (If exists) | `Archive`, `ExternalPop` | **`self.archive`** | $(N', D)$ | **PERSISTENT**. Treat as separate state. |
 | **Sparse Mask** | `Mask` | **`self.mask`** | $(N, D)$ | Pair with `self.pop`. |
-| **Constraint Violation** | `Population.cons`, `CV` | **REMOVE** | - | Unconstrained Mode. |
+| **Constraint Violation** (if used) | `Population.cons`, `CV` | `self.cv` / local aggregate | $(N,C)$ / $(N,)$ | Source-defined constraint policy. |
 | **Bounds** | `Problem.lower/upper` | `self.lb`, `self.ub` | $(D,)$ | Stored in `__init__`. |
 
 **3. Logic Translation Protocols**
@@ -28,14 +28,15 @@ You must distinguish between **Persistent State** (maintained across generations
 * **B. The Decoupling Protocol**
     * *Source*: `Population = Population(Next)`
     * *Target*: You must explicitly instruct the Coder to slice **all** active tensors synchronously.
-    * *Instruction*: "Slice `self.pop`, `self.fit`, and `self.mask` using the `Next` indices."
+    * *Instruction*: "Slice `self.pop`, `self.fit`, and active `self.cv`/`self.mask` using the same `Next` indices."
 
 * **C. The Evaluation Protocol**
     * *Source*: `Problem.Evaluation(Dec)` or `Problem.Evaluation(Dec .* Mask)`
     * *Target*: `self.evaluate(...)`.
+    * Evaluation may also return CV when the source supports constraints.
     * *Instruction*: If SparseEA, ensure the input to evaluate is `self.pop * self.mask`.
 
 * **D. The Duplicate Removal Protocol**
     * *Source*: `unique(Population.objs, 'rows')`
     * *Target*: `evomo.utils.unique_rows_sorted`.
-    * *Instruction*: "Calculate unique indices on `self.fit`, then apply these indices to filter `self.pop`, `self.fit`, and `self.mask`."
+    * *Instruction*: "Calculate unique indices on the source's specified values, then apply those indices to `self.pop`, `self.fit`, and active `self.cv`/`self.mask`."

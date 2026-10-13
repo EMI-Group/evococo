@@ -1,5 +1,5 @@
 {
-  "version": "1.6",
+  "version": "1.7",
   "rules": [
     {
       "id": "Bug #1 (Integer Sentinel)",
@@ -505,7 +505,23 @@
         "dynamic"
       ],
       "always_apply": true,
-      "instruction": "The code uses torch.compile. Keep data-dependent Python control flow and .item()/.tolist()/.cpu().numpy() outside compiled kernels. Preserve source-required sequential structure in a torch.compiler.disable helper when Python control flow is necessary; tensorize its independent calculations and retain source stopping conditions and update order. Do not add fallback termination or unroll every possible front into a large compiled graph."
+      "instruction": "The code uses torch.compile. Keep data-dependent Python control flow and .item()/.tolist()/.cpu().numpy() outside compiled kernels. Preserve source-required sequential structure in a torch.compiler.disable helper when Python control flow is necessary; tensorize its independent calculations and retain source stopping conditions and update order. Do not add fallback termination or unroll every possible front into a large compiled graph. For compiled diagonal/view mutation failures, use out-of-place masking, e.g. distance.masked_fill(torch.eye(N, device=distance.device, dtype=torch.bool), torch.inf), instead of mutating a diagonal view."
+    },
+    {
+      "id": "Bug #42 (Evaluation Budget and Phase Mapping)",
+      "description": "Apply when the source actively uses evaluation counts/budgets or multi-stage state transitions in algorithm formulas or decisions; ordinary framework termination alone is insufficient.",
+      "action": "must",
+      "keywords": ["Problem.FE", "Problem.maxFE", "evaluation count", "phase transition", "stage", "epsilon schedule"],
+      "always_apply": false,
+      "instruction": "In the existing blueprint initialization/workflow sections, copy source parameter defaults and phase predicates explicitly. Map FE to an algorithm-owned counter that includes initialization and each actually evaluated batch, and maxFE to a configurable constructor budget. UnifiedWorkflow does not inject algorithm.problem. Do not substitute constant-zero FE, generation*N when extra batches are evaluated, or fixed budget phases for source stability/feasibility triggers. Preserve the source update order and distinction between primary population and variable-size archive."
+    },
+    {
+      "id": "Bug #43 (Optional Per-Constraint State)",
+      "description": "Apply when the source indexes individual constraints, maintains per-constraint populations, or performs epsilon relaxation/constraint-priority calculations; not merely because a CV name appears.",
+      "action": "must",
+      "keywords": ["per-constraint", "constraint priority", "epsilon", "auxiliary population", "Population.cons"],
+      "always_apply": false,
+      "instruction": "Keep individual CV columns and derive relaxed/aggregated comparison values locally without overwriting evaluated CV. Compute violation counts and feasible ratios from the source population, never random surrogates. For fitness-only evaluations, adapt the source framework's no-constraint convention: PlatEMO's default CalCon returns zeros(N,1), so source code using that shape may need a local neutral column, rather than blindly skipping its branches. Distinguish this comparison representation from actual absent CV (None); when CV is supplied, retain it and synchronize source primary/auxiliary/archive slicing."
     }
   ]
 }
