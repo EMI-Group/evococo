@@ -354,7 +354,7 @@
     },
     {
       "id": "Bug #29 (Batch Vectorization Override)",
-      "description": "Translating MATLAB element-wise iterations directly into Python `for` or `while` loops causes extreme PyTorch overhead due to kernel launch delays, destroying runtime performance.",
+      "description": "Python loops over independent element-wise calculations add kernel launch overhead. Batch those calculations while preserving source-dependent sequential updates.",
       "action": "must",
       "keywords": [
         "for",
@@ -366,7 +366,7 @@
         "each"
       ],
       "always_apply": true,
-      "instruction": "You MUST aggressively eliminate Python `for/while` loops that iterate over individuals (N) or dimensions (D). ALWAYS substitute element-wise loops with advanced PyTorch tensor operations: 1. Use `valid_mask = score > threshold` followed by `tensor[valid_mask] = X` instead of `if` statements. 2. Use `torch.where` for conditional assignments. 3. Use Broadcasting and `torch.matmul` (`@`) for pairwise calculations instead of nested loops. DO NOT sacrifice algorithmic mathematical fidelity, but execute it entirely via vectorized bulk operations."
+      "instruction": "Batch independent individual, dimension and pairwise calculations using tensor indexing, torch.where, broadcasting and matrix operations. Preserve source-dependent sequential updates, stopping conditions and update order; do not replace them with a different sort or fixed iteration budget. Source-required Python control flow may be isolated in a torch.compiler.disable helper while its independent calculations remain tensorized."
     },
     {
       "id": "Bug #30 (Brutal Static Truncation)",
@@ -495,7 +495,7 @@
     },
     {
       "id": "Bug #41 (Universal PyTorch JIT Compliance)",
-      "description": "Any use of .item(), data-dependent for loops, or dynamic mask indexing will cause PyTorch torch.compile (Inductor) to crash or graph break.",
+      "description": "Data-dependent Python control flow and tensor-to-Python conversions inside compiled kernels cause graph breaks. Source-required sequential helpers may stay outside compilation.",
       "action": "must_not",
       "keywords": [
         "item",
@@ -505,7 +505,7 @@
         "dynamic"
       ],
       "always_apply": true,
-      "instruction": "CRITICAL JIT CONSTRAINT: The generated code will be compiled using `torch.compile()`. You MUST NOT use `.item()`, `.tolist()`, or `.cpu().numpy()` anywhere, as they force graph breaks. You MUST NOT use Python `for` loops whose iteration count or break conditions depend on tensor values (e.g., iterating over a dynamic tensor subset). Use fully vectorized operations like `torch.where`, `torch.topk`, `torch.argsort`, or boolean masking instead."
+      "instruction": "The code uses torch.compile. Keep data-dependent Python control flow and .item()/.tolist()/.cpu().numpy() outside compiled kernels. Preserve source-required sequential structure in a torch.compiler.disable helper when Python control flow is necessary; tensorize its independent calculations and retain source stopping conditions and update order. Do not add fallback termination or unroll every possible front into a large compiled graph."
     }
   ]
 }

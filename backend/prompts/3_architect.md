@@ -7,13 +7,14 @@ Your goal is to transform the abstract logic from the Analyst Report into a conc
 
 ## Core Responsibilities
 1.  **State Architecture**: Decide which variables persist (using `evox.Mutable`) vs which are temporary.
-2.  **Tensor Algebra (NO PYTHON LOOPS)**: Explicitly design the PyTorch broadcasting (`N x 1 x D - 1 x N x D`), `bmm`, `einsum`, or boolean filter masking (`torch.where(mask)`) logic to replace element-wise MATLAB operations.
+2.  **Tensor Algebra**: Use broadcasting, `bmm`, `einsum` and masking for independent calculations. Preserve source-required sequential structure and its update order; isolate Python control flow outside compiled kernels when needed.
 3.  **Source Code Fidelity (In-Place Tensorization)**:
     * **Goal**: Vectorize the *exact* logic present in the MATLAB code. **Do NOT replace custom logic with standard EvoX operators if they behave differently.**
     * **Rule**: If MATLAB does `accumulate zmin`, you design `self.zmin = torch.min(self.zmin, ...)` using PyTorch.
     * **Rule**: If MATLAB does `round` before `unique`, you design `rounded_pop = (pop * 1e6).round() / 1e6` before calling uniqueness tools.
 4.  **Evidence Priority**: Raw MATLAB is authoritative for algorithm logic; the SDK reference is authoritative for API signatures, parameter meanings, and return values. Correct conflicting summaries or generic RAG advice rather than copying them into the blueprint.
     * For every custom metric, show the original source expression beside its tensor equivalent, including reductions, index bounds, and update order. Preserve source order statistics except for the explicitly requested NSGA-II-SDR threshold variant below.
+    * Distinguish evaluated objectives from temporary selection copies. If the source normalizes or rounds local objectives, keep those values local and apply survivor indices to the original population and fitness; do not persist transformed unique values in place of evaluated fitness. Preserve source return-value retention and discard behavior.
     * Distinguish cosine distance from similarity before applying `acos`. Preserve source sums rather than substituting Euclidean norms.
     * An SDK Pareto-ranking function accepts objective values, not a custom dominance matrix. Preserve the source front-peeling algorithm for custom dominance.
     * Map variation parameters by their meaning. EvoX polynomial mutation divides `pro_m` by the decision dimension internally; source per-variable probability `1/D` requires `pro_m=1.0`, with both bounds supplied.
@@ -56,7 +57,7 @@ Classify variables into **Persistent State** (Algorithm properties) and **Local 
 | ... | ... | ... | ... | ... |
 
 ## 3. Tensor Algebra (The Shape Formulas)
-Describe *HOW* to calculate complex metrics using tensor operations. **Do NOT describe loops unless strictly necessary for peeling.**
+Describe tensor formulas and any source-required sequential structure, including its stopping condition and update order.
 
 ### A. Initialization
 * Logic: ...
@@ -83,9 +84,9 @@ Describe *HOW* to calculate complex metrics using tensor operations. **Do NOT de
 #### 3. Selection Strategy (The Loop or Sort)
 * **Strategy**: "Global Sort & Slice" OR "Integrated Peeling" (based on algorithm type).
 * **Requirement**: 
-    * If the algorithm requires **iterative peeling** (e.g., NSGA-II style), use the **"Integrated Peeling with Deadlock Breaker"** pattern.
-    * **Immediate Metric Calc**: Calculate row-dependent metrics (like Crowding Distance) INSIDE the loop immediately using the front mask. **Do NOT use a separate for-loop later.**
-    * **Final Selection**: Use `lexsort` for the final cut.
+    * Retain source-required peeling and sequential updates, without adding deadlock exits or fallback termination. Use `torch.compiler.disable` for the structural helper if compilation would unroll excessive work.
+    * Preserve metric update order. When storing SDK crowding per front, update only the current mask; do not sum full masked outputs across fronts.
+    * Use `lexsort` for the final cut only when it preserves the source selection semantics and key priorities.
 
 ## 4. Helper Function Contracts
 Check the **RAG Constraints**. If a rule (e.g., Bug #7 or #17) explicitly requires a helper function to replicate MATLAB logic, define it here. **If no specific helper is required, write "None".**

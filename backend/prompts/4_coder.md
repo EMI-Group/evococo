@@ -11,49 +11,29 @@ Your goal is to implement the Architect's Blueprint into executable Python code 
 
 1.  **Strict Class Structure**: Inherit from `evox.core.Algorithm`.
 2.  **Mutable Semantics**: Use `self.pop = Mutable(...)`. **NEVER** use `.value`.
-3.  **Tensor Shapes**: Strictly follow the "Tensor Map" in the Blueprint.
+3.  **Tensor Shapes and Values**: Follow the Blueprint's Tensor Map. When the source transforms local objective copies for selection, keep those copies local and apply survivor indices to the original population and evaluated fitness. Unique normalized/rounded values are not the evaluated fitness. Preserve the source's choice of returned values to retain or discard; helper calls must not silently change persistent state that the source caller leaves unchanged.
 4.  **RAG Compliance**: If the Blueprint mentions a "Hard Constraint" (e.g., specific helper function or sentinel value), you **MUST** implement it exactly.
     **Selection Semantics**: Preserve each site's Selection Semantics Contract.
     Add a short comment at the call recording semantic priority and SDK key order.
     For rank-first/crowding-second selection, use `fitnesses=[-crowding, rank]`.
     The last SDK key is primary; never use a weighted rank/crowding score instead.
-5.  **NO EXTRA CONTROL-FLOW (ABSOLUTE)**:
-    - The output code MUST NOT contain the standalone keywords: `break` or `continue` anywhere.
-    - The output code MUST NOT introduce any early `return` statements inside algorithm logic.
-    - You MUST NOT add any “safety”, “fallback”, “should not happen”, or “deadlock prevention” branches that change termination behavior.
-      Examples that are strictly forbidden:
-        - `if not mask.any(): break`
-        - `else: break`
-        - `if ...: return`
-        - `if ...: raise ...` (except the single `raise NotImplementedError` placeholder in the skeleton BEFORE real logic is implemented)
-    - Assume the MATLAB logic is correct. Do NOT add extra termination checks or guards. Translate the logic exactly without introducing new control-flow exits.
-    - These rules apply to algorithm logic. Preserve the required fitness validation in the fixed demo block below.
-6.  **No Extra Loops**:
-    - Do NOT introduce new Python `for`/`while` loops beyond what the Blueprint explicitly requires.
-    - Prefer vectorized tensor operations over Python loops.
-7.  **JIT COMPLIANCE (CRITICAL)**:
-    - The output code will be compiled using `torch.compile()`.
-    - You MUST NOT use `.item()`, `.tolist()`, or `.cpu().numpy()` anywhere, as they force graph breaks.
-    - You MUST NOT use data-dependent control flow, such as `for` loops whose iteration count or break conditions depend on dynamic tensor sizes or masks. Use fully vectorized operations (e.g., `torch.where`, `torch.topk`, `torch.argsort`) instead.
-    - Exception for source-required structural front peeling: retain the source stopping condition inside a helper decorated with `torch.compiler.disable` if needed. Do not unroll every possible front into a large compiled graph. Keep individual/pairwise calculations tensorized, and keep the fixed demo unchanged.
+5.  **Source Control Flow**: Preserve source stopping conditions and update order. Do not add fallback `break`, `continue`, early exits or error paths to conceal bugs. For example, do not force remaining individuals into a front and break when a mask is empty unless the source does that. Ordinary helper returns are allowed. Preserve the fixed demo's validation.
+6.  **Vectorization**: Batch independent individual, dimension and pairwise calculations. Retain source-required sequential structure; do not replace it with a different sort or fixed iteration budget.
+7.  **JIT**: Keep data-dependent Python loops and `.item()`/`.tolist()`/`.cpu().numpy()` outside compiled kernels. When source-required sequential structure needs Python control flow, isolate that helper with `torch.compiler.disable` and tensorize its independent calculations. Do not unroll every possible front into a large compiled graph.
+8.  **Imports**: Import only symbols used by the completed implementation. The skeleton lists the minimal imports; add required SDK imports from the reference, without copying entire toolbox/example import lists.
 
 ## Output Contract
 Output **ONLY** the raw Python code. Do not wrap in Markdown fences (like ```python) if possible.
 
-## Code Skeleton (MUST FOLLOW EXACTLY)
+## Required Class Interface
 
-You MUST use this exact structure for imports, class definition, and the main block.
+Preserve the class interface and fixed main block. Extend the skeleton with the
+source-required state, helpers and imports only.
 Replace `<YourAlgoName>` with the actual algorithm name.
 
 ```python
 import torch
-from evox.core import Algorithm, Mutable, Parameter
-from evox.utils import clamp, randint, nanmin, nanmax, lexsort
-from evox.operators.crossover import simulated_binary
-from evox.operators.mutation import polynomial_mutation
-from evox.operators.selection import tournament_selection_multifit, crowding_distance
-from evomo.operators.selection import nd_environmental_selection, non_dominate_rank, ref_vec_guided
-from evomo.utils import unique_rows_sorted
+from evox.core import Algorithm, Mutable
 
 
 class <YourAlgoName>(Algorithm):
@@ -70,9 +50,7 @@ class <YourAlgoName>(Algorithm):
         self.pop = Mutable(torch.rand(pop_size, D, device=device) * (ub - lb) + lb)  # [N,D]
         self.fit = Mutable(torch.full((pop_size, n_objs), torch.inf, device=device))  # [N,M]
 
-        # Standard EvoX Sentinel for integer tensors (Bug #1 Compliance)
-        sentinel = torch.iinfo(torch.int32).max
-        # Example: self.FrontNo = Mutable(torch.full((pop_size,), sentinel, dtype=torch.int32, device=device))
+        # If integer state is needed, use torch.iinfo(dtype).max as its sentinel.
 
     def init_step(self) -> None:
         self.fit = self.evaluate(self.pop)  # [N,M]

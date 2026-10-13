@@ -28,13 +28,11 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 
 ## 4. Forbidden Anti-Patterns (STRICTLY PROHIBITED)
 
-1. **NO Individual-level Loops**: Do NOT write `for i in range(N):` to process individuals (e.g., mutation, crossover).
-    * **❌ BAD**: `for i in range(N): if rand() < prob: mask[i] = toggle()`
-    * **✅ GOOD (God-Mode)**: `do_mut = torch.rand(N) < prob; mask[do_mut] = toggle()`
-2. **NO CPU-GPU Sync**: Do NOT use `.item()` or `.tolist()` in the main execution paths. This forces the GPU to halt and wait for the CPU.
+1. **Batch Independent Calculations**: Vectorize independent individual, dimension and pairwise calculations rather than processing them with Python loops.
+2. **Compiled Kernels**: Keep data-dependent Python control flow and `.item()`/`.tolist()`/`.cpu().numpy()` outside compiled kernels. Source-required sequential structure may use a helper decorated with `torch.compiler.disable`; tensorize the independent calculations inside it.
 3. **NO Dynamic Lists Extraction**: Do NOT use `selected_indices = []` and `extend()`. Operations must stay in Tensor space.
-4. **NO Iterative Selection (While loop peeling)**: Do NOT write `while len(selected) < N:` to iteratively pick fronts.
-    * **✅ GOOD (Lexsort)**: Calculate the required metrics, then use `evox.utils.lexsort` with keys ordered from lowest to highest priority. For rank ascending followed by crowding descending, use keys `[-CD, Rank]`. Do NOT substitute a weighted score such as `Rank - CD * 1e-4`: it changes lexicographic priority, especially for infinite crowding. Slice `self.pop = pop[sorted_idx[:N]]` only when this preserves the source selection semantics.
+4. **Preserve Sequential Semantics**: Retain source-required peeling, sequential updates, stopping conditions and update order. Do not add deadlock exits or fallback termination, or replace iterative selection with a different sort or fixed iteration budget.
+    * When a source-equivalent global sort is valid, use `evox.utils.lexsort` with keys ordered from lowest to highest priority. For rank ascending followed by crowding descending, use keys `[-CD, Rank]`. Do NOT substitute a weighted score such as `Rank - CD * 1e-4`: it changes lexicographic priority, especially for infinite crowding. Slice `self.pop = pop[sorted_idx[:N]]` only when this preserves the source selection semantics.
 5. **NO Numpy**: Use `torch` exclusively unless absolutely necessary.
 
 ## 5. Required Tensorization Paradigms
@@ -46,4 +44,4 @@ All calculations must use `torch.Tensor` on GPU (cuda) if available.
 * **NO "SIMPLIFIED FOR VECTORIZATION"**: You MUST 100% faithfully translate the mathematical objectives, fitness calculations, and archive pruning from the original MATLAB code. 
 * **EXACT MATHEMATICAL ISOMORPHISM**: When translating scientific and mathematical elements (e.g., Jacobian matrices, multi-term fitness weighting, penalty formulas), you must perform a strict operator-by-operator mapping. NEVER alter the original code's constants (e.g., if MATLAB has `theta=0.2`, do not invent `theta=0.5` or hardcode your own assumptions). NEVER reduce multi-term formulas (e.g., if MATLAB uses `dis(:,1) + 0.1*dis(:,2)`, use `topk(k=2)` or `sort` to perfectly replicate the first and second neighbor weights; do NOT substitute it with a naive `min()` operation).
 * **Do NOT** simplify complex metrics (e.g., higher-order distances, multi-stage selections, dual-fitness contributions) into single-dimension proximities just because it is easier to write in PyTorch without a loop. 
-* **NO PYTHON FOR-LOOP FALLBACKS**: If tensorizing a highly complex evaluation formula seems mathematically difficult, you **MUST NEVER** fall back to a lightweight Python `for` loop over individuals (N) or dimensions (D). You MUST force vectorization using advanced boolean indexing (`mask = ...; tensor[mask] = ...`), broadcasting (`A.unsqueeze(1) - B.unsqueeze(0)`), or `torch.where`. You must execute the original mathematics entirely via batched tensor operations without sacrificing ecological logic.
+* **Loop Transformations**: Vectorize independent work without flattening source-dependent sequential updates. Mathematical fidelity takes priority over an implementation preference.

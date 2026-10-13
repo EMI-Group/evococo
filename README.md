@@ -222,6 +222,19 @@ a complete semantic validator: existing NaN allowances and finite wrong results
 can escape it. SDK guidance for masked crowding updates applies only when the
 generated algorithm actually uses EvoX `crowding_distance`.
 
+Coder skeletons list minimal imports; generated implementations add only the SDK
+symbols they use. RAG selection returns integer `selected_bug_numbers` and matches
+conditional rules to mechanisms, so ordinary Pareto ranking does not imply SDR
+and selection masks do not imply binary decision variables. Branch strategies
+are implementation preferences: independent calculations are batched, while
+source-required sequential structure retains its stopping conditions and update
+order in a `torch.compiler.disable` helper when needed. No fallback termination
+is introduced to conceal logic errors.
+Temporary normalized or rounded selection copies remain distinct from evaluated
+fitness when the source keeps the original values. Survivor indices are applied
+to the source-owned population and fitness together, and helper return values
+are retained or discarded according to the source caller.
+
 > [!IMPORTANT]
 > Never commit `.env` or expose provider API keys in generated artifacts and logs.
 

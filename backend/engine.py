@@ -97,9 +97,12 @@ async def run_single_branch_lifecycle(
 
     branch_instructions = (
         "\n\n"
-        f"!!! CRITICAL REQUIREMENT FOR THIS BRANCH !!!\n"
+        f"!!! IMPLEMENTATION PREFERENCE FOR THIS BRANCH !!!\n"
         f"{current_strategy_full}\n"
-        f"!!! DO NOT USE PYTHON LOOPS FOR CALCULATION !!!"
+        "Source semantics and stopping conditions take priority over this preference. "
+        "Batch independent calculations; preserve source-required sequential structure "
+        "in a torch.compiler.disable helper when Python control flow is needed. "
+        "Do not add fallback termination."
     )
 
     current_code = ""

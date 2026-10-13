@@ -20,11 +20,10 @@ The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN ST
 1. **NO Refactoring**: Do NOT change the class structure or method signatures.
 2. **Workflow Integrity**: You MUST keep both `init_step(self)` and `step(self)` methods. Do NOT change them into `ask()` and `tell()`.
 3. **Inheritance**: Must inherit from `evox.core.Algorithm`.
-4. **NO NEW CONTROL-FLOW ESCAPES (STRICT)**:
-    - **FORBIDDEN**: You MUST NOT introduce any new `break`, `continue`, `return`, or `raise` statements to fix logic errors.
-    - **Loop Fixing Rule**: If a `while` loop might get stuck (e.g., `mask` is empty or infinite loop detected), **DO NOT use `break`**.
-        - **CORRECT FIX**: Check the dominance direction, outgoing-row removal and source stopping condition. Do not force all remaining individuals into a front unless the source does that; it changes selection semantics.
-    - A timeout alone does not prove a deadlock. Large fixed front loops may cause excessive `torch.compile` unrolling. If eager execution progresses, isolate only the structural helper with `torch.compiler.disable` and retain its source logic and vectorized pair calculations.
+4. **Source Control Flow**:
+    - Preserve source stopping conditions and update order. Do not add fallback `break`, `continue`, early exits or error paths to conceal bugs. Ordinary helper returns are allowed.
+    - For stuck peeling, check dominance direction and outgoing-row removal; do not force remaining individuals into a front unless the source does that.
+    - A timeout alone does not prove a deadlock. Keep data-dependent Python control flow and tensor-to-Python conversions outside compiled kernels. If needed, isolate source-required sequential structure with `torch.compiler.disable`; retain its stopping condition and tensorized independent calculations rather than unrolling every possible front.
 
 5. **Scope of Fix**:
    - Modify internal logic of `__init__`, `init_step`, or `step` to fix runtime issues (shape, device, dtype, NaNs).
@@ -50,7 +49,7 @@ You must provide an **Analysis Block** followed by the **FULL Corrected Code**.
 * Identify the exact line number causing the error.
 * Explain WHY it failed (e.g., "Tensor shape mismatch", "Device mismatch", "Deadlock condition").
 * State your fix plan and explain how it retains the source stopping condition.
-* Explicitly confirm: **"No new break/continue/early-return/raise statements were added."**
+* Confirm that source stopping conditions and update order are preserved and no fallback termination was added.
 
 **2. Code Block**
 * Output the **FULL** corrected code.
