@@ -505,7 +505,7 @@
         "dynamic"
       ],
       "always_apply": true,
-      "instruction": "Minimize host scalar extraction in algorithm hot paths: retain random samples, thresholds, rates and arithmetic as tensors; use known configuration/shape metadata directly; retain tensor indices with gather/index_select/scatter. float(tensor), int(tensor), bool(tensor) and Python if on a tensor reduction also synchronize, so they are not substitutes for .item(). Batch independent random work with the source sampling dependencies intact. torch.where is for pure same-shape value selection, not branches that evaluate offspring or mutate state. Permit minimal host reads only at genuinely required control boundaries and in logging. Isolate the smallest source-required sequential helper; whole-step compiler.disable is a performance downgrade, not the default repair. Preserve stopping conditions, state order and sequential dependencies; do not add fallback termination or unroll every front. For diagonal/view mutation failures, use out-of-place masked_fill with an eye mask instead of mutating a diagonal view."
+      "instruction": "Minimize .item() and equivalent int/float/bool(tensor) conversions in hot paths; keep values and indices as tensors, allowing reads only for source-required control or logging. Isolate sequential helpers rather than disabling the entire step. Preserve sampling dependencies, stopping conditions and state order; do not unroll all fronts or add fallback termination. Use torch.where only for pure value selection, and out-of-place masks for diagonal/view updates."
     },
     {
       "id": "Bug #42 (Evaluation Budget and Phase Mapping)",
