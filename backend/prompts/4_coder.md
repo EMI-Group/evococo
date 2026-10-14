@@ -15,8 +15,6 @@ Your goal is to implement the Architect's Blueprint into executable Python code 
 4.  **RAG Compliance**: If the Blueprint mentions a "Hard Constraint" (e.g., specific helper function or sentinel value), you **MUST** implement it exactly.
     **Selection Semantics**: Preserve each site's Selection Semantics Contract.
     Add a short comment at the call recording semantic priority and SDK key order.
-    For rank-first/crowding-second selection, use `fitnesses=[-crowding, rank]`.
-    The last SDK key is primary; never use a weighted rank/crowding score instead.
 5.  **Source Control Flow**: Preserve source stopping conditions and update order. Do not add fallback `break`, `continue`, early exits or error paths to conceal bugs. For example, do not force remaining individuals into a front and break when a mask is empty unless the source does that. Ordinary helper returns are allowed. Preserve the fixed demo's validation.
 6.  **Vectorization**: Batch independent individual, dimension and pairwise calculations. Retain source-required sequential structure; do not replace it with a different sort or fixed iteration budget.
 7.  **JIT**: Apply the RAG's tensor-retention and minimal-synchronization patterns. Preserve source control boundaries in the smallest helper; keep independent calculations compilable. Do not use whole-step `compiler.disable` as the default solution or unroll every possible front.

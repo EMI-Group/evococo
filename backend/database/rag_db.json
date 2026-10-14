@@ -39,7 +39,7 @@
         "distinct"
       ],
       "always_apply": true,
-      "instruction": "Use `evomo.utils.unique_rows_sorted(x)` instead of `torch.unique`."
+      "instruction": "For source row-wise deduplication of 2D tensors, use evomo.utils.unique_rows_sorted(x) and retain its original-row indices. This does not replace 1D torch.unique order statistics."
     },
     {
       "id": "Bug #5 (Torch Cond)",
@@ -94,7 +94,7 @@
     },
     {
       "id": "Bug #9 (Efficient Peeling)",
-      "description": "Non-domination ranks are zero-based. For iterative front sorting, use a deadlock breaker and calculate metrics inside the loop.",
+      "description": "SDK non-domination ranks are zero-based. Custom front peeling must preserve the source axes, metric scope and stopping condition without fallback termination.",
       "action": "must",
       "keywords": [
         "nsga",
@@ -409,7 +409,7 @@
     },
     {
       "id": "Bug #34 (Monte Carlo HV Sampling)",
-      "description": "Exact hypervolume contribution reduction is incompatible with tensorization for M>2.",
+      "description": "Hypervolume contribution selection must retain the source computation and tie policy, including whether it is exact or sampled.",
       "action": "must",
       "keywords": [
         "SMSEMOA",
@@ -418,7 +418,7 @@
         "WFG"
       ],
       "always_apply": false,
-      "instruction": "For exact Hypervolume (HV) contribution calculations when M>2, you MUST use Monte Carlo sampling. To prevent blind deletion of elite solutions due to sparse sampling: (1) Use a massive sample size (e.g., `num_samples = 1000000`). (2) Implement a tie-breaking mechanism (like Crowding Distance or KNN) for solutions that receive 0 exclusive samples instead of directly using `argmin`."
+      "instruction": "Preserve the source hypervolume contribution method and tie policy. Do not replace exact HV with Monte Carlo, change sample counts, or introduce crowding/KNN tie-breakers unless the source does so."
     },
     {
       "id": "Bug #35 (WHV Proxy Abuse)",
@@ -459,7 +459,7 @@
     },
     {
       "id": "Bug #38 (PSO Boundary Clamping)",
-      "description": "Missing velocity and position clamping in Particle Swarm algorithms causes particles to diverge to infinity.",
+      "description": "PSO position repair and velocity handling must follow the source boundary policy.",
       "action": "must",
       "keywords": [
         "SMPSO",
@@ -467,7 +467,7 @@
         "pso"
       ],
       "always_apply": false,
-      "instruction": "For PSO-based algorithms, velocity and position updates MUST always be followed by strict boundary clamping (`torch.clamp(pos, lb, ub)`). When a position hits the boundary, the corresponding velocity must be inverted or zeroed to prevent escape."
+      "instruction": "Preserve the source position repair and velocity policy at bounds; do not add velocity inversion or zeroing unless present in the source."
     },
     {
       "id": "Bug #39 (SDE / Distance Masking Bug)",
@@ -483,7 +483,7 @@
     },
     {
       "id": "Bug #40 (Catastrophic Population Shrinkage)",
-      "description": "Truncating the population by taking only Rank 1 individuals without filling up to N causes permanent population collapse.",
+      "description": "For source-fixed-size environmental selection, selecting only the first front can incorrectly shrink the main population.",
       "action": "must",
       "keywords": [
         "PESA-II",
@@ -491,7 +491,7 @@
         "permanent shrink"
       ],
       "always_apply": false,
-      "instruction": "In Environmental Selection, you MUST NOT permanently shrink the population size below `pop_size` (N). When truncating, if `Rank 1` has fewer than N individuals, you must iteratively include subsequent ranks (Rank 2, Rank 3, etc.) until exactly N individuals are selected. Never do a hard `self.pop = rank1_pop` unless `len(rank1_pop) == N`. Use a `while count < N:` loop or `torch.argsort()` on combined metrics to ensure exactly N individuals survive."
+      "instruction": "When the source environmental selection retains N individuals, include subsequent fronts as the source requires until N survive. Preserve source-defined variable populations and archives; do not pad them or impose the requested pop_size on a source simplex."
     },
     {
       "id": "Bug #41 (Universal PyTorch JIT Compliance)",

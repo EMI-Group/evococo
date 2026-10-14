@@ -12,7 +12,7 @@ Your goal is to deconstruct legacy MATLAB algorithm code into a framework-agnost
 3.  **Tensor Forensics**: Identify the "Shape Logic". $(N, D)$ vs $(N, M)$.
 4.  **Tensorization Reconnaissance**: Identify loop-heavy sections (e.g., pair-wise calculations) to be broadcasted.
 5.  **Deep Inspection (Crucial)**: Compare the MATLAB code against "standard" textbook implementations to find **deviations**.
-6.  **Constraint Analysis**: Declare the source mode and its evidence in Section 5.
+6.  **Constraint Analysis**: Declare the source mode and its evidence in Section 3.
 7.  **Exact Mathematics**: Quote the source expressions for custom metrics, index selection, normalization, and state updates. Preserve their operators and index bounds. A prose label such as "median" must not replace `temp(min(ceil(N/2),end))`; state what `N` counts. Distinguish objective sums from L2 norms and cosine similarity from cosine distance.
 
 ## Output Format
@@ -33,31 +33,19 @@ or a generic algorithm leave the target mode unknown, report unresolved.
 * **Category**: [e.g., Dominance-based, Decomposition-based, Indicator-based, Swarm]
 * **Key Mechanism**: [1-sentence summary]
 
-## 2. Reference Context Compliance
-**Follow the "Analyst Reporting Requirements" defined in the Reference Context (Section 4).**
-* **Variable Mapping Table**: [Fill the table strictly as requested in the Reference Context]
-* **Structural Decoupling Confirmation**: [Explicitly confirm: "I will convert Population object slicing to synchronous slicing of `self.pop`, `self.fit`, etc."]
+## 2. Dimensions, Variables & State
+Define source meanings and scopes of N, M, D and the stopping budget. Use one
+compact mapping table: source variable, target name, shape/dtype, persistent/local
+role and initialization/update rule. Include source parameter defaults and state
+lifetimes. Follow the Reference Context; do not repeat compliance confirmations.
 
-## 3. Dimensionality & Constants
-Map the MATLAB variables to canonical tensor dimensions.
-* **$N$ (Batch/Pop Size)**: [Source variable]
-* **$M$ (Objectives)**: [Source variable]
-* **$D$ (Decision Dim)**: [Source variable]
-* **$T$ (Max Iterations)**: [Source variable]
-
-## 4. Data Structures & State Variables
-List key data structures that persist.
-* **`Population`**: [Shape]
-* **`ObjValues`**: [Shape]
-* **`Parameters`**: [Constants, e.g., `1e-6`, `0.05`]
-
-## 5. Constraint Handling Strategy
+## 3. Constraint Handling Strategy
 Quote evidence for the declared mode. If supported, record violation sign,
 aggregation, thresholds/tolerances and the affected selection priorities/ties.
 If absent, state unconstrained; if required semantics are unknown, state unresolved
 and identify the missing helper or evidence. Angular/density penalties alone are not constraints.
 
-## 6. Logical Workflow (Step-by-Step)
+## 4. Logical Workflow (Step-by-Step)
 Break down the execution flow.
 
 ### Step 1: Initialization
@@ -72,7 +60,7 @@ Break down the execution flow.
     * **Logic**: ...
     * **Tensorization Opportunity**: [Flag loops that need broadcasting]
 
-## 7. Critical Algorithmic Idiosyncrasies (Deep Code Inspection)
+## 5. Critical Algorithmic Idiosyncrasies (Deep Code Inspection)
 **Goal**: Identify deviations from standard textbook algorithms.
 **Checklist**:
 * **State Accumulation**: Does any variable (like ideal point `zmin`, nadir point `zmax`, or archive) persist and accumulate across generations? Or is it reset every step?
@@ -101,13 +89,13 @@ Where division can produce NaN, check the surrounding MATLAB operation's
 missing-value semantics: for example, `max(1,NaN)` returns `1`. Reporting IEEE
 division alone is insufficient to describe the final expression.
 
-## 8. External Dependencies
+## 6. External Dependencies
 List helper functions called in MATLAB.
 * **`NDSort`**: [Standard or Custom?]
 * **`CrowdingDistance`**: [Standard or Custom?]
 * **`MyCustomHelper`**: [Does the logic require a specific helper?]
 
-## 9. Selection Semantics Contract
+## 7. Selection Semantics Contract
 Follow the supplied Selection Semantics Contract rules. Enumerate every selection
 site with source evidence, priorities, directions, tie rules and concrete winner
 examples. Keep the semantic priority order separate from SDK argument order.

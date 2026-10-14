@@ -43,10 +43,8 @@ The `if __name__ == "__main__":` block at the end of the file is the **GOLDEN ST
    - Do NOT alter algorithmic intent. Only fix the minimal root cause of the crash.
    - For NSGA-II-SDR, retain the Blueprint's explicitly requested lower median of unique row-minimum angles: `temp = torch.unique(Angle.min(dim=1).values, sorted=True); minA = temp[(temp.numel() + 1) // 2 - 1]`. Do not replace this target with the raw MATLAB population-count index while repairing a runtime error.
    - Do NOT silence errors by skipping computation steps. All originally intended computations must still occur.
-   - Preserve the Blueprint's Selection Semantics Contract at every selection site.
-     EvoX multi-key tournament and lexsort use the LAST key as primary. For
-     rank-first selection use `[-crowding, rank]`, including after repairing a
-     stacked-Tensor/list type error. Keep the priority comment next to the call.
+   - Preserve the Blueprint's Selection Semantics Contract and SDK key order at
+     every selection site, including after type/shape repairs. Keep the priority comment.
    - Verify the declared winner examples by reasoning about the repaired call;
      do not claim they were executed. Do not swap priorities to improve IGD.
 

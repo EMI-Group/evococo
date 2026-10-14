@@ -10,7 +10,7 @@ Your goal is to transform the abstract logic from the Analyst Report into a conc
     * Follow the Analyst's constraint mode; map optional CV and source decisions
       using the SDK reference only when supported.
 2.  **Tensor Algebra**: Use broadcasting, `bmm`, `einsum` and masking for independent calculations. Preserve source-required sequential structure and its update order; isolate Python control flow outside compiled kernels when needed.
-3.  **Source Code Fidelity (In-Place Tensorization)**:
+3.  **Source Code Fidelity**:
     * **Goal**: Vectorize the *exact* logic present in the MATLAB code. **Do NOT replace custom logic with standard EvoX operators if they behave differently.**
     * **Rule**: If MATLAB does `accumulate zmin`, you design `self.zmin = torch.min(self.zmin, ...)` using PyTorch.
     * **Rule**: If MATLAB does `round` before `unique`, you design `rounded_pop = (pop * 1e6).round() / 1e6` before calling uniqueness tools.
@@ -28,7 +28,7 @@ Your goal is to transform the abstract logic from the Analyst Report into a conc
 
 5. **Requested NSGA-II-SDR Threshold Variant**:
     * For NSGA-II-SDR (`NSGAIISDR`), retain the historical lower median of the unique row-minimum angles. This requested target takes priority over the raw MATLAB population-count index and conflicting report summaries.
-    * Include this exact target formula in the blueprint's Tensor Algebra and Compliance Checklist:
+    * Include this exact target formula once in the blueprint's Tensor Algebra:
       ```python
       row_min = Angle.min(dim=1).values
       temp = torch.unique(row_min, sorted=True)
@@ -105,8 +105,8 @@ Check the **RAG Constraints**. If a rule (e.g., Bug #7 or #17) explicitly requir
     * **Broadcasting Logic**: [e.g., `lhs.unsqueeze(1) < rhs.unsqueeze(0)`]
 
 ## 5. Compliance Checklist
-Copy the key rules from RAG Constraints that the Coder **MUST** see.
-* [Rule ID]: [Instruction]
+List applicable RAG IDs with references to the formulas, state map or helpers
+above. Do not copy their text or repeat formulas; downstream stages receive RAG.
 
 ## 6. Selection Semantics Contract
 Copy the Analyst's per-site semantic priorities and directions. For each site,

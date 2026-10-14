@@ -81,20 +81,20 @@ LLM_PROVIDERS = {
 }
 # Tensorization strategies to inject for each branch
 STRATEGIES_SHORT = [
-    "BROADCASTING (No Loops)",
+    "BROADCASTING",
     "EINSUM OPTIMIZATION",
-    "MASKED OPS (No If/Else)",
-    "IN-PLACE EFFICIENCY",
+    "MASKED OPS",
+    "MEMORY EFFICIENCY",
     "ADVANCED OPS (cdist)",
     "JIT-COMPLIANT PEELING",
 ]
 
 STRATEGIES_FULL = [
     "STRATEGY: BROADCASTING EXPERT. Use standard PyTorch broadcasting (unsqueeze, expand) for independent matrix operations. Preserve source-dependent sequential helpers.",
-    "STRATEGY: EINSUM OPTIMIZATION. Use `torch.einsum` for all matrix multiplications and dimension reductions. It is cleaner and faster.",
-    "STRATEGY: MASKED OPERATIONS. Avoid `if/else` logic. Use `torch.where`, `torch.masked_fill` to handle conditional logic on tensors.",
-    "STRATEGY: IN-PLACE EFFICIENCY. Minimize memory overhead. Use in-place operations (`add_`, `mul_`) where possible.",
-    "STRATEGY: ADVANCED OPS. Use high-level PyTorch functions like `torch.cdist`, `torch.linalg.norm` instead of manual formulas.",
+    "STRATEGY: EINSUM OPTIMIZATION. Prefer `torch.einsum` where it expresses the source contractions exactly.",
+    "STRATEGY: MASKED OPERATIONS. Prefer `torch.where` and `torch.masked_fill` for pure value selection; preserve source control flow and sampling dependencies.",
+    "STRATEGY: MEMORY EFFICIENCY. Avoid redundant copies; use out-of-place updates for views and aliases that would make mutation unsafe under compilation.",
+    "STRATEGY: ADVANCED OPS. Prefer high-level PyTorch functions like `torch.cdist` and `torch.linalg.norm` only when equivalent to the source formulas.",
     "STRATEGY: JIT-COMPLIANT PEELING. Keep hot-path values and indices as tensors; minimize host reads at genuinely required control boundaries. Pre-allocate buffers when source shapes permit and preserve source-dependent sequential updates.",
 ]
 
