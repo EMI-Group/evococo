@@ -110,18 +110,24 @@ def format_stats_header(perf_stats, judge_result=None):
             b_idx = b.get("branch_idx", -1)
             strat_name = b.get("strategy", "Unknown Strategy")
             success_str = "SUCCESS" if b.get("success") else "FAILED"
-            igd_val = b.get("igd", float("inf"))
+            single = b.get("metric_name") == "best_fitness"
+            igd_val = b.get("best_fitness" if single else "igd", float("inf"))
             if isinstance(igd_val, float) and igd_val != float("inf"):
                 igd_str = f"{igd_val:.5f}"
             else:
                 igd_str = str(igd_val)
-            stats_header += f"#   - Branch {b_idx} ({strat_name}): {success_str} | Final IGD: {igd_str}\n"
+            label = "Best fitness" if single else "Final IGD"
+            stats_header += f"#   - Branch {b_idx} ({strat_name}): {success_str} | {label}: {igd_str}\n"
             constraint_history = b.get("constraint_history", [])
             if constraint_history:
                 last = constraint_history[-1]
+                feasible_label = "Feasible best" if single else "Feasible IGD"
+                feasible_value = last[
+                    "feasible_best_fitness" if single else "feasible_igd"
+                ]
                 stats_header += (
                     f"#     * {last['problem']}: feasible {last['feasible_count']}/{last['population']} "
-                    f"| Mean CV: {last['mean_cv']:.5g} | Feasible IGD: {last['feasible_igd']}\n"
+                    f"| Mean CV: {last['mean_cv']:.5g} | {feasible_label}: {feasible_value}\n"
                 )
 
             b_m = b.get("metrics", {})

@@ -522,6 +522,14 @@
       "keywords": ["per-constraint", "constraint priority", "epsilon", "auxiliary population", "Population.cons"],
       "always_apply": false,
       "instruction": "Keep individual CV columns and derive relaxed/aggregated comparison values locally without overwriting evaluated CV. Compute violation counts and feasible ratios from the source population, never random surrogates. For fitness-only evaluations, adapt the source framework's no-constraint convention: PlatEMO's default CalCon returns zeros(N,1), so source code using that shape may need a local neutral column, rather than blindly skipping its branches. Distinguish this comparison representation from actual absent CV (None); when CV is supplied, retain it and synchronize source primary/auxiliary/archive slicing."
+    },
+    {
+      "id": "Bug #44 (Large Scalar Penalty Precision)",
+      "description": "Apply when source comparisons add a large constant penalty to constraint violation, as in FitnessSingle's CV+1e10.",
+      "action": "must",
+      "keywords": ["FitnessSingle", "1e10", "scalar penalty", "constraint violation"],
+      "always_apply": false,
+      "instruction": "For source penalties such as CV+1e10, form the comparison key in float64 before adding the constant so float32 does not erase CV differences. Preserve the source formula and ties; leave population/objective tensors in their existing dtype."
     }
   ]
 }

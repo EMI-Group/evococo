@@ -31,7 +31,7 @@ def _split_demo(code: str) -> tuple[str, str, str] | None:
     normalized = copy.deepcopy(main)
     constructors = [
         node.value.func
-        for node in normalized.body
+        for node in ast.walk(normalized)
         if isinstance(node, ast.Assign)
         and len(node.targets) == 1
         and isinstance(node.targets[0], ast.Name)

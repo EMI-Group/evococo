@@ -43,6 +43,7 @@ from evomo.operators.selection import (
 )
 # Usage:
 #   # Single-objective tournament (min fitness wins)
+#   # For column fitness (N,1), pass fit[:, 0]; negate it for maximization.
 #   parent_idx = tournament_selection(n_round=pop_size, fitness=fit, tournament_size=2)
 #   parents = pop[parent_idx]
 #
@@ -83,6 +84,8 @@ from evomo.operators.selection import (
 
 # Optional CV state/evaluation only for source-supported algorithms:
 from evomo.utils import parse_evaluate, register_lazy_buffer
+# EvoX self.evaluate does not perform PlatEMO CalDec. Preserve source-required
+# decision repair before each evaluation and retain repaired rows in later formulas/state.
 #   register_lazy_buffer(self, "cv", device_like="pop")  # once, after self.pop exists
 #   self.fit, self.cv = parse_evaluate(self.evaluate(self.pop))
 #   # parse_evaluate only unpacks; it does not clamp or aggregate CV.

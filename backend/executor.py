@@ -171,6 +171,8 @@ async def execute_code(
     *,
     validate_fitness: bool = False,
     supports_constraints: bool = False,
+    objective_mode: str = "multi",
+    objective_direction: str = "min",
 ):
     """Run generated code in an isolated workspace and return its output."""
     if not session_id:
@@ -191,6 +193,10 @@ async def execute_code(
                 cmd = [sys.executable, runner, filename]
                 if supports_constraints:
                     cmd.append("--constraints")
+                if objective_mode == "single":
+                    cmd.append("--single-objective")
+                    if objective_direction == "max":
+                        cmd.append("--maximize")
             else:
                 cmd = [sys.executable, filename]
             # Scale the per-problem budget with the 100-step verification profile.
@@ -253,22 +259,90 @@ async def execute_code_trial(
     filename="algo_script.py",
     *,
     supports_constraints: bool = False,
+    objective_mode: str = "multi",
+    objective_direction: str = "min",
 ) -> dict:
     """Advanced trial run function: execute code and analyze convergence metrics"""
     start_time = time.time()
+    single = objective_mode == "single"
+    if objective_mode not in {"single", "multi"} or objective_direction not in {
+        "min",
+        "max",
+    }:
+        raise ValueError("Invalid objective mode or direction")
     success, output, error = await execute_code(
         code_str,
         session_id,
         filename,
         validate_fitness=True,
         supports_constraints=supports_constraints,
+        **(
+            {"objective_mode": "single", "objective_direction": objective_direction}
+            if single
+            else {}
+        ),
     )
     duration = time.time() - start_time
 
     igds = parse_igd_from_stdout(output)
     constraint_history = []
+    if single:
+        igds = []
+        generations = (
+            {"Sphere": [], "ConstrainedSphere": []}
+            if supports_constraints
+            else {None: []}
+        )
+        for line in output.splitlines():
+            if line.startswith("SINGLE_OBJECTIVE_METRICS: "):
+                try:
+                    row = json.loads(line.removeprefix("SINGLE_OBJECTIVE_METRICS: "))
+                    value = row["best_fitness"]
+                    problem = row["problem"] if supports_constraints else None
+                    if (
+                        problem not in generations
+                        or row["direction"] != objective_direction
+                        or type(row["generation"]) is not int
+                        or type(value) not in (int, float)
+                        or not math.isfinite(value)
+                    ):
+                        raise ValueError("Invalid single-objective metric values")
+                    generations[problem].append(row["generation"])
+                    if problem == "ConstrainedSphere":
+                        feasible_best = row["feasible_best_fitness"]
+                        if (
+                            type(row["population"]) is not int
+                            or row["population"] <= 0
+                            or type(row["feasible_count"]) is not int
+                            or not 0 <= row["feasible_count"] <= row["population"]
+                            or type(row["mean_cv"]) not in (int, float)
+                            or not math.isfinite(row["mean_cv"])
+                            or row["mean_cv"] < 0
+                            or (row["feasible_count"] == 0) != (feasible_best is None)
+                            or (
+                                feasible_best is not None
+                                and (
+                                    type(feasible_best) not in (int, float)
+                                    or not math.isfinite(feasible_best)
+                                )
+                            )
+                        ):
+                            raise ValueError(
+                                "Invalid single-objective constraint metrics"
+                            )
+                        constraint_history.append(row)
+                    else:
+                        igds.append(value)
+                except (ValueError, TypeError, KeyError) as exc:
+                    success = False
+                    error += f"\nRuntime validation failed: malformed single-objective metrics ({exc})."
+        if success and any(
+            steps != list(range(5, 101, 5)) for steps in generations.values()
+        ):
+            success = False
+            error += "\nRuntime validation failed: single-objective checkpoints must cover steps 5-100."
     for line in output.splitlines():
-        if line.startswith("CONSTRAINT_METRICS: "):
+        if not single and line.startswith("CONSTRAINT_METRICS: "):
             try:
                 record = json.loads(line.removeprefix("CONSTRAINT_METRICS: "))
                 if (
@@ -309,6 +383,8 @@ async def execute_code_trial(
     is_converging = False
     if len(igds) >= 2 and not has_nonfinite and igds[-1] < igds[0]:
         is_converging = True
+    if single and objective_direction == "max":
+        is_converging = len(igds) >= 2 and not has_nonfinite and igds[-1] > igds[0]
 
     exec_time = parse_exec_time_from_stdout(output)
 
@@ -316,8 +392,17 @@ async def execute_code_trial(
         "success": success,
         "stdout": output,
         "stderr": error,
-        "last_igd": last_igd,
-        "igd_history": igds,
+        **(
+            {
+                "metric_name": "best_fitness",
+                "metric_direction": objective_direction,
+                "best_fitness": last_igd,
+                "fitness_history": igds,
+                "last_metric": last_igd,
+            }
+            if single
+            else {"last_igd": last_igd, "igd_history": igds}
+        ),
         "has_nan": has_nan,
         "has_nonfinite": has_nonfinite,
         "is_converging": is_converging,

@@ -23,6 +23,10 @@ Please output a Markdown report following this exact structure:
 
 Immediately after this heading, emit one plain line: `CONSTRAINT_SUPPORT: supported`,
 `CONSTRAINT_SUPPORT: unconstrained`, or `CONSTRAINT_SUPPORT: unresolved`.
+Also emit `OBJECTIVE_MODE: single`, `multi`, or `unresolved`; for single, emit
+`OBJECTIVE_DIRECTION: min` or `max`. Infer from source tags, evaluation outputs
+and complete selection logic, not scalarized fitness alone. If external helpers
+or a generic algorithm leave the target mode unknown, report unresolved.
 
 ## 1. Algorithm Identity
 * **Name**: [Algorithm Name]

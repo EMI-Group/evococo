@@ -98,8 +98,51 @@ def _constraint_support_from_report(report: str) -> bool:
     return modes == {"supported"}
 
 
+def _objective_mode_from_report(report: str) -> tuple[str, str]:
+    """Require source evidence; unknown/generic input needs a concrete target."""
+    text = report.replace("**", "").replace("`", "")
+    modes = set(
+        re.findall(
+            r"^\s*OBJECTIVE_MODE:\s*(single|multi|unresolved)\s*$", text, re.I | re.M
+        )
+    )
+    modes = {mode.lower() for mode in modes}
+    if len(modes) != 1 or "unresolved" in modes:
+        raise ValueError(
+            "Analyst must resolve OBJECTIVE_MODE as single or multi from source evidence."
+        )
+    mode = modes.pop()
+    directions = {
+        d.lower()
+        for d in re.findall(
+            r"^\s*OBJECTIVE_DIRECTION:\s*(min|max)\s*$", text, re.I | re.M
+        )
+    }
+    if mode == "single" and len(directions) != 1:
+        raise ValueError(
+            "Single-objective source must declare OBJECTIVE_DIRECTION: min or max."
+        )
+    return mode, directions.pop() if mode == "single" else "min"
+
+
 def _candidate_fallback_key(candidate: dict) -> tuple:
     """Use each benchmark's own metrics if the Judge is unavailable."""
+    if candidate.get("metric_name") == "best_fitness":
+        value = candidate["best_fitness"]
+        score = value if candidate["metric_direction"] == "min" else -value
+        history = candidate.get("constraint_history", [])
+        if history:
+            last = history[-1]
+            feasible = last["feasible_best_fitness"]
+            return (
+                feasible is None,
+                (feasible if candidate["metric_direction"] == "min" else -feasible)
+                if feasible is not None
+                else last["mean_cv"],
+                -last["feasible_count"] / last["population"],
+                score,
+            )
+        return (score,)
     history = candidate.get("constraint_history", [])
     if history:
         last = history[-1]
@@ -125,6 +168,8 @@ async def run_single_branch_lifecycle(
     coder_start: asyncio.Event | None = None,
     coder_finished: asyncio.Event | None = None,
     supports_constraints: bool = False,
+    objective_mode: str = "multi",
+    objective_direction: str = "min",
 ):
     """
     Independently run a code generation branch: Coder -> Static Fix -> Runtime Fix
@@ -152,6 +197,28 @@ async def run_single_branch_lifecycle(
         "Do not add fallback termination."
     )
 
+    single = objective_mode == "single"
+    metric_key = "best_fitness" if single else "igd"
+    history_key = "fitness_history" if single else "igd_history"
+    metric_label = "Best fitness" if single else "IGD"
+    metric_metadata = (
+        {"metric_name": "best_fitness", "metric_direction": objective_direction}
+        if single
+        else {}
+    )
+    demo = load_resource(
+        (
+            "verification_single_constrained.md"
+            if supports_constraints
+            else "verification_single.md"
+        )
+        if single
+        else (
+            "verification_constrained.md"
+            if supports_constraints
+            else "verification_unconstrained.md"
+        )
+    ).replace("<ObjectiveDirection>", objective_direction)
     current_code = ""
     branch_metrics = {"coder": {}, "static_fixes": [], "runtime_fixes": []}
 
@@ -176,11 +243,7 @@ async def run_single_branch_lifecycle(
                 blueprint_plan=blueprint_md,
                 asset_library=asset_lib_content,
                 few_shot_examples=few_shot_content,
-                verification_block=load_resource(
-                    "verification_constrained.md"
-                    if supports_constraints
-                    else "verification_unconstrained.md"
-                ),
+                verification_block=demo,
                 temperature=current_temp,
                 metrics_out=coder_metrics,
             )
@@ -238,7 +301,7 @@ async def run_single_branch_lifecycle(
         # STEP 6: RUNTIME FIXER
         # =================================================
         MAX_RUNTIME_RETRIES = 2
-        best_igd_in_branch = float("inf")
+        best_value = float("inf")
         best_history = []
 
         for attempt in range(MAX_RUNTIME_RETRIES + 1):
@@ -246,7 +309,15 @@ async def run_single_branch_lifecycle(
                 "log", L_TAG, f"Runtime Attempt {attempt + 1} executing..."
             )
 
-            if supports_constraints:
+            if single:
+                report = await execute_code_trial(
+                    current_code,
+                    session_id,
+                    objective_mode="single",
+                    objective_direction=objective_direction,
+                    **({"supports_constraints": True} if supports_constraints else {}),
+                )
+            elif supports_constraints:
                 report = await execute_code_trial(
                     current_code, session_id, supports_constraints=True
                 )
@@ -260,7 +331,7 @@ async def run_single_branch_lifecycle(
                 save_artifact(
                     run_dir,
                     f"6_log_{branch_id}_try{attempt}.txt",
-                    f"IGD: {report['last_igd']}\nErr: {report['stderr']}\n"
+                    f"{metric_label}: {report.get('last_metric', report.get('last_igd'))}\nErr: {report['stderr']}\n"
                     f"Constraints: {json.dumps(report.get('constraint_history', []))}\n"
                     f"Output:\n{report.get('stdout', '')}",
                 )
@@ -277,25 +348,31 @@ async def run_single_branch_lifecycle(
 
             if report["success"]:
                 if (
-                    report["igd_history"]
+                    report[history_key]
                     and not report["has_nonfinite"]
                     and (not supports_constraints or report.get("constraint_history"))
                 ):
-                    best_igd_in_branch = report["last_igd"]
-                    best_history = report["igd_history"]
+                    best_value = (
+                        report["best_fitness"] if single else report["last_igd"]
+                    )
+                    best_history = report[history_key]
 
                     # [LOG] Success log (PERF color)
                     await status_callback(
                         "log",
                         "PERF",
-                        f"[{L_TAG}] Success! IGD: {best_igd_in_branch:.5f}",
+                        f"[{L_TAG}] Success! {metric_label}: {best_value:.5f}",
                     )
                     if supports_constraints:
                         last = report["constraint_history"][-1]
                         await status_callback(
                             "log",
                             "PERF",
-                            f"[{L_TAG}] MW4 feasible: {last['feasible_count']}/{last['population']}; "
+                            f"[{L_TAG}] {last['problem']} feasible: {last['feasible_count']}/{last['population']}; "
+                            f"mean CV: {last['mean_cv']:.5g}; "
+                            f"feasible best: {last['feasible_best_fitness']}"
+                            if single
+                            else f"[{L_TAG}] MW4 feasible: {last['feasible_count']}/{last['population']}; "
                             f"mean CV: {last['mean_cv']:.5g}; feasible IGD: {last['feasible_igd']}",
                         )
 
@@ -303,8 +380,9 @@ async def run_single_branch_lifecycle(
                     return {
                         "success": True,
                         "code": current_code,
-                        "igd": best_igd_in_branch,
-                        "igd_history": best_history,
+                        metric_key: best_value,
+                        **metric_metadata,
+                        history_key: best_history,
                         "exec_time": report.get("exec_time", -1.0),
                         "branch_idx": branch_idx,
                         "metrics": branch_metrics,
@@ -312,15 +390,19 @@ async def run_single_branch_lifecycle(
                     }
                 else:
                     await status_callback(
-                        "log", "ERR", f"[{L_TAG}] Missing or non-finite IGD metrics."
+                        "log",
+                        "ERR",
+                        f"[{L_TAG}] Missing or non-finite {metric_label} metrics.",
                     )
 
             if attempt < MAX_RUNTIME_RETRIES:
                 err_summary = report["stderr"]
                 if report["has_nonfinite"]:
-                    err_summary = "Runtime Warning: Non-finite IGD values detected."
-                elif report["success"] and not report["igd_history"]:
-                    err_summary = "Runtime Error: No IGD metrics were produced by the algorithm trial."
+                    err_summary = (
+                        f"Runtime Warning: Non-finite {metric_label} values detected."
+                    )
+                elif report["success"] and not report[history_key]:
+                    err_summary = f"Runtime Error: No {metric_label} metrics were produced by the algorithm trial."
                 elif not report["success"] and not err_summary:
                     err_summary = f"Runtime Error: Execution failed. output: {report['stdout'][-200:]}"
 
@@ -349,8 +431,9 @@ async def run_single_branch_lifecycle(
         return {
             "success": False,
             "code": current_code,
-            "igd": float("inf"),
-            "igd_history": [],
+            metric_key: float("inf"),
+            **metric_metadata,
+            history_key: [],
             "exec_time": -1.0,
             "branch_idx": branch_idx,
             "metrics": branch_metrics,
@@ -364,8 +447,9 @@ async def run_single_branch_lifecycle(
         return {
             "success": False,
             "code": current_code,
-            "igd": float("inf"),
-            "igd_history": [],
+            metric_key: float("inf"),
+            **metric_metadata,
+            history_key: [],
             "exec_time": -1.0,
             "branch_idx": branch_idx,
             "metrics": branch_metrics,
@@ -473,11 +557,28 @@ async def run_pipeline(matlab_code: str, status_callback):
         if run_dir:
             save_artifact(run_dir, "1_analyst_ir.md", ir_md)
         supports_constraints = _constraint_support_from_report(ir_md)
+        objective_mode, objective_direction = _objective_mode_from_report(ir_md)
+        single = objective_mode == "single"
+        metric_key = "best_fitness" if single else "igd"
+        history_key = "fitness_history" if single else "igd_history"
+        metric_metadata = (
+            {"metric_name": "best_fitness", "metric_direction": objective_direction}
+            if single
+            else {}
+        )
+        if single:
+            few_shot_content = ""
+        perf_stats.update(
+            objective_mode=objective_mode, objective_direction=objective_direction
+        )
         perf_stats["supports_constraints"] = supports_constraints
         await status_callback(
             "log",
             "MODE",
-            "Source-supported constraints: DTLZ2 + MW4 verification."
+            f"Single-objective {objective_direction}: Sphere"
+            f"{' + ConstrainedSphere' if supports_constraints else ''} verification."
+            if single
+            else "Source-supported constraints: DTLZ2 + MW4 verification."
             if supports_constraints
             else "Unconstrained source: DTLZ2 verification only.",
         )
@@ -564,6 +665,8 @@ async def run_pipeline(matlab_code: str, status_callback):
             f"Source constraint support (Analyst): {source_mode}. "
             "Preserve the source policy; do not add or discard a constraint mechanism."
         )
+        if single:
+            branch_constraints += f"\nSingle-objective {objective_direction}; keep fitness (N,1), source comparisons and ties. Benchmark: Sphere{' + ConstrainedSphere' if supports_constraints else ''} (negative Sphere for max); no IGD applies."
         if run_dir:
             save_artifact(run_dir, "2_rag_selection.json", rag_result.model_dump())
 
@@ -646,6 +749,8 @@ async def run_pipeline(matlab_code: str, status_callback):
                         coder_start=coder_ready if i > 0 else None,
                         coder_finished=coder_ready if i == 0 else None,
                         supports_constraints=supports_constraints,
+                        objective_mode=objective_mode,
+                        objective_direction=objective_direction,
                     )
                 )
             )
@@ -671,7 +776,8 @@ async def run_pipeline(matlab_code: str, status_callback):
                         res["branch_idx"] % len(STRATEGIES_SHORT)
                     ],
                     "success": res["success"],
-                    "igd": res["igd"],
+                    metric_key: res[metric_key],
+                    **metric_metadata,
                     "metrics": b_metrics,
                     "constraint_history": res.get("constraint_history", []),
                 }
@@ -695,8 +801,9 @@ async def run_pipeline(matlab_code: str, status_callback):
                 {
                     "branch_id": res["branch_idx"],
                     "success": res["success"],
-                    "final_igd": res["igd"],
-                    "igd_history": res["igd_history"],
+                    ("final_best_fitness" if single else "final_igd"): res[metric_key],
+                    **metric_metadata,
+                    history_key: res[history_key],
                     "exec_time": res.get("exec_time", -1.0),
                     "constraint_history": res.get("constraint_history", []),
                     "code_snippet": res["code"],

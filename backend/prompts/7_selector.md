@@ -8,13 +8,21 @@ You are the **Lead Reviewer** for the EvoCoCo system.
 Parallel branches have generated, executed, and repaired different versions of an algorithm.
 Your job is to select the **SINGLE BEST** implementation based on performance and code quality.
 
+For single-objective candidates (`metric_name=best_fitness`), use
+`final_best_fitness` and `fitness_history` in the declared `metric_direction`.
+The IGD criteria and fixed tie thresholds below apply only to multiobjective
+candidates. Preserve source semantics; finite fitness does not require monotonic
+population improvement or a new elitist mechanism.
+For constrained single-objective results, compare `feasible_best_fitness` in that
+direction (null means no feasible solution), then CV; keep Sphere results separate.
+
 ## Selection Criteria (Weighted)
 
 **1. Runtime Stability (Hard Constraint)**
 * **Must be `Success: True`**.
 * **Must NOT have NaNs** in the IGD history.
 * Select only an existing branch whose `success` is true.
-* For `constraint_history`, compare feasible fraction, mean CV and feasible-only
+* For multiobjective `constraint_history`, compare feasible fraction, mean CV and feasible-only
   IGD on the same problem, separately from DTLZ2. Null IGD means no feasible solutions.
 
 **2. Convergence Quality (Baseline Requirement)**
