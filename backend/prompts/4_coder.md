@@ -91,3 +91,11 @@ See the Shared Algorithm Blueprint above.
 
 ### 2. Hard Constraints (The Rules)
 {constraints}
+
+### 3. Original MATLAB (Source Check)
+Check formulas, branch conditions, update order and retained helper returns against
+the source below. Source logic takes priority over conflicting blueprint summaries;
+retain explicitly requested variants, including the NSGA-II-SDR lower median.
+Use the blueprint for tensor layout and the SDK reference for target APIs.
+
+{matlab_code}

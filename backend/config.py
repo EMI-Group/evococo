@@ -47,6 +47,12 @@ _default_analyst_effort = (
 ANALYST_REASONING_EFFORT = os.getenv(
     "ANALYST_REASONING_EFFORT", _default_analyst_effort
 ).strip()
+_default_architect_effort = (
+    "high" if ACTIVE_LLM_PROVIDER.startswith("deepseek") else REASONING_EFFORT
+)
+ARCHITECT_REASONING_EFFORT = os.getenv(
+    "ARCHITECT_REASONING_EFFORT", _default_architect_effort
+).strip()
 LLM_PROVIDERS = {
     "zhipu": {
         "base_url": os.getenv(

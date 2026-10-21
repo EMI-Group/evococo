@@ -530,6 +530,21 @@
       "keywords": ["FitnessSingle", "1e10", "scalar penalty", "constraint violation"],
       "always_apply": false,
       "instruction": "For source penalties such as CV+1e10, form the comparison key in float64 before adding the constant so float32 does not erase CV differences. Preserve the source formula and ties; leave population/objective tensors in their existing dtype."
+    },
+    {
+      "id": "Bug #45 (Derived Keys and Source Values)",
+      "description": "The source derives deduplication or sorting indices from transformed keys (such as rounded objectives), then applies those indices to the original values for subsequent calculations.",
+      "action": "must",
+      "keywords": [
+        "unique",
+        "round",
+        "deduplication",
+        "sort",
+        "indices",
+        "transformed keys"
+      ],
+      "always_apply": false,
+      "instruction": "When the source derives indices from transformed keys and then indexes the original tensor X, preserve that data flow: discard the unique-key values and slice X with the returned indices. Do not replace X with the transformed keys for later ranking, density or state updates. Preserve the source rounding semantics."
     }
   ]
 }

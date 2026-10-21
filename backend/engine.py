@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from .config import (
     ANALYST_REASONING_EFFORT,
+    ARCHITECT_REASONING_EFFORT,
     GLOBAL_SPEC_PATH,  # noqa: F401 - kept as module-level re-export
     HISTORY_DIR,  # noqa: F401 - kept as module-level re-export
     MAX_RETAINED_WORKSPACES,  # noqa: F401 - kept as module-level re-export
@@ -244,6 +245,7 @@ async def run_single_branch_lifecycle(
                 asset_library=asset_lib_content,
                 few_shot_examples=few_shot_content,
                 verification_block=demo,
+                matlab_code=matlab_code,
                 temperature=current_temp,
                 metrics_out=coder_metrics,
             )
@@ -698,6 +700,7 @@ async def run_pipeline(matlab_code: str, status_callback):
             selection_semantics=selection_semantics,
             matlab_code=matlab_code,
             asset_library=asset_lib_content,
+            reasoning_effort=ARCHITECT_REASONING_EFFORT,
             metrics_out=architect_metrics,
         )
         if run_dir:
